@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.zip
 .DS_Store
+# 本机 IMDb 探测的输出（含响应原文，不进版本库）
+probe-out/

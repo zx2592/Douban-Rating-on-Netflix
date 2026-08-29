@@ -8,6 +8,8 @@
     "build": "node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch",
     "icons": "node scripts/gen-icons.mjs",
+    "probe:imdb": "node scripts/imdb-probe.mjs",
+    "probe:imdb:self": "node scripts/imdb-probe.mjs --self-test",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
