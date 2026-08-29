@@ -3,7 +3,6 @@ import {
   extractYear,
   normalizeScore,
   parseSubjectAbstract,
-  parseSubjectHtml,
   parseSuggest,
 } from '../src/background/douban/parse';
 
@@ -72,6 +71,19 @@ describe('parseSuggest', () => {
     expect(candidate?.originalTitle).toBeUndefined();
   });
 
+  it('条目链接由 id 拼出，不带接口返回的 ?suggest= 跟踪参数', () => {
+    const [candidate] = parseSuggest([
+      {
+        id: '35131346',
+        title: '河边的错误',
+        type: 'movie',
+        year: '2023',
+        url: 'https://movie.douban.com/subject/35131346/?suggest=%E6%B2%B3%E8%BE%B9',
+      },
+    ]);
+    expect(candidate?.url).toBe('https://movie.douban.com/subject/35131346/');
+  });
+
   it('suggest 接口不返回评分，所以候选的 score 一定是 null', () => {
     for (const candidate of parseSuggest(SUGGEST_FIXTURE)) {
       expect(candidate.score).toBeNull();
@@ -93,11 +105,22 @@ describe('parseSuggest', () => {
 });
 
 describe('parseSubjectAbstract', () => {
-  it('解析 rate 字段', () => {
-    expect(parseSubjectAbstract({ subject: { rate: '7.4', title: '河边的错误' } })).toEqual({
-      score: 7.4,
-      votes: null,
-    });
+  it('解析实际返回的结构', () => {
+    // 按线上实测的响应构造：顶层有结果码 r，评分在 subject.rate 里。
+    const payload = {
+      r: 0,
+      subject: {
+        episodes_count: '',
+        star: 4.0,
+        rate: '8.4',
+        short_comment: { content: '很好看' },
+      },
+    };
+    expect(parseSubjectAbstract(payload)).toEqual({ score: 8.4, votes: null });
+  });
+
+  it('结果码非 0 时视为响应不可信', () => {
+    expect(parseSubjectAbstract({ r: 1, subject: { rate: '8.4' } })).toBeNull();
   });
 
   it('兼容改名为 rating 的情况', () => {
@@ -110,35 +133,11 @@ describe('parseSubjectAbstract', () => {
   });
 
   it('豆瓣用 0 表示"暂无评分"，要转成 null', () => {
-    expect(parseSubjectAbstract({ subject: { rate: '0' } })?.score).toBeNull();
-  });
-});
-
-describe('parseSubjectHtml', () => {
-  it('优先从 ld+json 里读评分和评价人数', () => {
-    const html = `<html><head>
-      <script type="application/ld+json">
-      {"@context":"http://schema.org","@type":"Movie","name":"河边的错误",
-       "aggregateRating":{"@type":"AggregateRating","ratingCount":"254321",
-       "bestRating":"10","worstRating":"2","ratingValue":"7.4"}}
-      </script></head><body></body></html>`;
-    expect(parseSubjectHtml(html)).toEqual({ score: 7.4, votes: 254321 });
-  });
-
-  it('ld+json 缺失时退回到微数据属性', () => {
-    const html = `<strong class="ll rating_num" property="v:average"> 8.7 </strong>
-      <span property="v:votes">1234567</span>`;
-    expect(parseSubjectHtml(html)).toEqual({ score: 8.7, votes: 1234567 });
-  });
-
-  it('ld+json 是坏 JSON 时也能退回微数据，不会抛异常', () => {
-    const html = `<script type="application/ld+json">{ 这不是 JSON </script>
-      <strong property="v:average">6.2</strong>`;
-    expect(parseSubjectHtml(html)).toEqual({ score: 6.2, votes: null });
-  });
-
-  it('页面里根本没有评分时返回 null', () => {
-    expect(parseSubjectHtml('<html><body>404</body></html>')).toBeNull();
+    // 注意这和「返回 null」不是一回事：这里响应是好的，只是这部片还没出分。
+    expect(parseSubjectAbstract({ r: 0, subject: { rate: '0' } })).toEqual({
+      score: null,
+      votes: null,
+    });
   });
 });
 

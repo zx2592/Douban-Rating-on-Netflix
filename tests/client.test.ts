@@ -35,7 +35,7 @@ function fakeResponse(
   return {
     status,
     ok: status >= 200 && status < 300,
-    url: init.url ?? 'https://www.douban.com/j/subject_suggest',
+    url: init.url ?? 'https://movie.douban.com/j/subject_suggest',
     headers: new Headers(init.headers ?? {}),
     text: async () => body,
   } as unknown as Response;
@@ -61,6 +61,15 @@ describe('DoubanClient.search', () => {
     const candidates = await client.search('河边的错误');
     expect(candidates).toHaveLength(1);
     expect(candidates[0]?.id).toBe('35131346');
+  });
+
+  it('打的是 movie 子域', async () => {
+    // www.douban.com 下的同名接口已被豆瓣下掉（404），换错域名会整条链路失效。
+    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => fakeResponse('[]'));
+    const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await client.search('测试');
+    expect(fetchImpl.mock.calls[0]![0]).toContain('https://movie.douban.com/j/subject_suggest');
   });
 
   it('对查询词做 URL 编码', async () => {
@@ -157,56 +166,62 @@ describe('DoubanClient 风控识别', () => {
   });
 });
 
-describe('DoubanClient.fetchRating 的降级链', () => {
-  it('subject_abstract 可用时只发一次请求', async () => {
-    const fetchImpl = vi.fn(async () => fakeResponse(JSON.stringify({ subject: { rate: '7.4' } })));
+describe('DoubanClient.fetchRating', () => {
+  it('取到评分，只发一次请求', async () => {
+    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) =>
+      fakeResponse(JSON.stringify({ r: 0, subject: { rate: '7.4' } })),
+    );
     const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
 
     expect(await client.fetchRating('35131346')).toEqual({ score: 7.4, votes: null });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]![0]).toContain('subject_id=35131346');
   });
 
-  it('subject_abstract 失效时回退到解析条目页 HTML', async () => {
-    const fetchImpl = vi
-      .fn<(url: string) => Promise<Response>>()
-      .mockResolvedValueOnce(fakeResponse('', { status: 404 }))
-      .mockResolvedValueOnce(
-        fakeResponse('<strong property="v:average">8.7</strong><span property="v:votes">99</span>'),
-      );
+  it('豆瓣尚未出分时返回 score: null，这是有效结果而不是错误', async () => {
+    const fetchImpl = vi.fn(async () => fakeResponse(JSON.stringify({ r: 0, subject: { rate: '0' } })));
     const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    expect(await client.fetchRating('123')).toEqual({ score: 8.7, votes: 99 });
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(fetchImpl.mock.calls[1]![0]).toContain('/subject/123/');
+    expect(await client.fetchRating('123')).toEqual({ score: null, votes: null });
   });
 
-  it('abstract 返回的结构里没有评分时也会回退', async () => {
-    const fetchImpl = vi
-      .fn<(url: string) => Promise<Response>>()
-      .mockResolvedValueOnce(fakeResponse(JSON.stringify({ subject: {} })))
-      .mockResolvedValueOnce(fakeResponse('<strong property="v:average">6.1</strong>'));
+  it('接口结构变了就抛异常，不能谎报成"暂无评分"', async () => {
+    // 把接口故障显示成"豆瓣没给这部片打分"会误导用户，必须区分开。
+    const fetchImpl = vi.fn(async () => fakeResponse(JSON.stringify({ unexpected: true })));
     const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    expect((await client.fetchRating('123'))?.score).toBe(6.1);
+    await expect(client.fetchRating('123')).rejects.toThrow('结构已变化');
   });
 
-  it('已经被限流时不再拿 HTML 去撞第二次', async () => {
+  it('结果码非 0 时同样抛异常', async () => {
+    const fetchImpl = vi.fn(async () => fakeResponse(JSON.stringify({ r: 1, subject: {} })));
+    const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(client.fetchRating('123')).rejects.toThrow('结构已变化');
+  });
+
+  it('不会去请求条目页 HTML', async () => {
+    // 实测扩展直接请求 movie.douban.com/subject/<id>/ 会被重定向到风控页，
+    // 拿它兜底不但取不到分，还会把队列打进退避、连累后续正常请求。
+    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) =>
+      fakeResponse('', { status: 404 }),
+    );
+    const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(client.fetchRating('123')).rejects.toThrow('HTTP 404');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    for (const call of fetchImpl.mock.calls) {
+      expect(call[0]).not.toMatch(/movie\.douban\.com\/subject\//);
+    }
+  });
+
+  it('被限流时抛 RateLimitedError', async () => {
     const queue = fastQueue();
     const fetchImpl = vi.fn(async () => fakeResponse('', { status: 403 }));
     const client = new DoubanClient(queue, { fetchImpl: fetchImpl as unknown as typeof fetch });
 
     await expect(client.fetchRating('123')).rejects.toBeInstanceOf(RateLimitedError);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-  });
-
-  it('条目页里也没有评分时返回 null', async () => {
-    const fetchImpl = vi
-      .fn<(url: string) => Promise<Response>>()
-      .mockResolvedValueOnce(fakeResponse('', { status: 404 }))
-      .mockResolvedValueOnce(fakeResponse('<html><body>页面不存在</body></html>'));
-    const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
-
-    expect(await client.fetchRating('123')).toBeNull();
   });
 });
 

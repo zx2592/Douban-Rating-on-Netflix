@@ -57,10 +57,10 @@ function suggestMediaType(entry: Record<string, unknown>): MediaType {
 }
 
 /**
- * 解析 `https://www.douban.com/j/subject_suggest?q=...`。
+ * 解析 `https://movie.douban.com/j/subject_suggest?q=...`。
  *
- * 返回的是一个数组，混杂电影、图书、音乐，这里只保留影视条目。
- * 注意该接口不返回评分，评分要靠 parseSubjectAbstract / parseSubjectHtml 再取一次。
+ * 返回的是一个数组，可能混进图书、音乐，这里只保留影视条目。
+ * 该接口不返回评分，评分要靠 parseSubjectAbstract 再取一次。
  */
 export function parseSuggest(payload: unknown): Candidate[] {
   if (!Array.isArray(payload)) return [];
@@ -87,7 +87,9 @@ export function parseSuggest(payload: unknown): Candidate[] {
       ...(subTitle && subTitle !== title ? { originalTitle: subTitle } : {}),
       score: null,
       votes: null,
-      url: asString(entry['url']) ?? subjectUrl(id),
+      // 用 id 自行拼接，不用接口返回的 url：那个 url 上挂着 ?suggest=<原查询词>
+      // 的跟踪参数，直接拿来做角标链接会把用户的检索词也带到地址栏里。
+      url: subjectUrl(id),
     };
     candidates.push(candidate);
   }
@@ -101,48 +103,25 @@ export interface RatingDetail {
 
 /**
  * 解析 `https://movie.douban.com/j/subject_abstract?subject_id=...`。
- * 这个接口很轻（不到 1KB），是取评分的首选，代价是不带评价人数。
+ *
+ * 这个接口很轻（不到 1KB），是取评分的唯一来源：条目页 HTML 那条路实测会被
+ * 豆瓣的风控直接拦掉，用不了。代价是它不返回评价人数。
+ *
+ * 返回 null 表示「这个响应读不懂」（结构变了），而不是「这部片没有评分」；
+ * 后者是 { score: null }。两者在上层的处理完全不同。
  */
 export function parseSubjectAbstract(payload: unknown): RatingDetail | null {
   if (typeof payload !== 'object' || payload === null) return null;
-  const subject = (payload as Record<string, unknown>)['subject'];
+  const envelope = payload as Record<string, unknown>;
+
+  // 顶层的 r 是结果码，0 表示正常；非 0 时 subject 里的内容不可信。
+  const code = asNumber(envelope['r']);
+  if (code !== undefined && code !== 0) return null;
+
+  const subject = envelope['subject'];
   if (typeof subject !== 'object' || subject === null) return null;
   const record = subject as Record<string, unknown>;
   // 不同时期这个字段叫 rate 或 rating，两个都认。
   const score = normalizeScore(record['rate'] ?? record['rating']);
   return { score, votes: null };
-}
-
-/**
- * 从条目页 HTML 里抠评分，作为 subject_abstract 失效时的兜底。
- *
- * MV3 的 service worker 里没有 DOMParser，只能用正则。优先读页面内嵌的
- * ld+json（结构化、稳定），读不到再退回到微数据属性。
- */
-export function parseSubjectHtml(html: string): RatingDetail | null {
-  const ldJsonMatch = /<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/i.exec(html);
-  if (ldJsonMatch?.[1]) {
-    try {
-      // 豆瓣这段 ld+json 里混有未转义的换行，直接 JSON.parse 会失败，先清理。
-      const cleaned = ldJsonMatch[1].replace(/[\n\r\t]/g, ' ');
-      const data = JSON.parse(cleaned) as Record<string, unknown>;
-      const aggregate = data['aggregateRating'];
-      if (typeof aggregate === 'object' && aggregate !== null) {
-        const record = aggregate as Record<string, unknown>;
-        const score = normalizeScore(record['ratingValue']);
-        const votes = asNumber(record['ratingCount']);
-        if (score !== null) return { score, votes: votes ?? null };
-      }
-    } catch {
-      // 落到下面的微数据分支。
-    }
-  }
-
-  const averageMatch = /property="v:average"[^>]*>\s*([\d.]+)\s*</i.exec(html);
-  const votesMatch = /property="v:votes"[^>]*>\s*(\d+)\s*</i.exec(html);
-  if (!averageMatch) return null;
-  return {
-    score: normalizeScore(averageMatch[1]),
-    votes: votesMatch?.[1] ? Number.parseInt(votesMatch[1], 10) : null,
-  };
 }

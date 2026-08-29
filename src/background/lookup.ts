@@ -54,8 +54,8 @@ export class RatingLookup {
       const rating: DoubanRating = {
         id: best.candidate.id,
         title: best.candidate.title,
-        score: detail?.score ?? best.candidate.score,
-        votes: detail?.votes ?? best.candidate.votes,
+        score: detail.score,
+        votes: detail.votes,
         year: best.candidate.year,
         type: best.candidate.type,
         url: best.candidate.url,

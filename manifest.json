@@ -5,7 +5,7 @@
   "description": "在 Netflix 的影片封面和详情页旁显示对应的豆瓣评分，点击可跳转豆瓣条目。",
   "minimum_chrome_version": "110",
   "permissions": ["storage"],
-  "host_permissions": ["*://*.douban.com/*"],
+  "host_permissions": ["https://movie.douban.com/*"],
   "background": {
     "service_worker": "background.js",
     "type": "module"
