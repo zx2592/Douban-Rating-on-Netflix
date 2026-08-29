@@ -58,38 +58,59 @@ function describe(state: BadgeState): string {
   }
 }
 
-function findBadge(anchor: HTMLElement): HTMLElement | null {
-  for (const child of Array.from(anchor.children)) {
-    if (child instanceof HTMLElement && child.classList.contains(BADGE_CLASS)) return child;
-  }
-  return null;
+/**
+ * 找出 root 子树里所有的角标。
+ *
+ * 刻意查整棵子树而不是只查直接子节点：角标挂载点（cardAnchor）是按一组候选
+ * 选择器解析出来的，Netflix 重渲染后同一张卡片可能解析到不同的元素，此时
+ * 旧角标还留在原处，新角标又挂到新元素上。两个角标都是 absolute + top/left
+ * 定位，正好叠在封面同一个角，看起来就是两个「豆」并排。
+ */
+function findBadges(root: HTMLElement): HTMLElement[] {
+  return [...root.querySelectorAll<HTMLElement>(`.${BADGE_CLASS}`)];
 }
 
-export function removeBadge(anchor: HTMLElement): void {
-  findBadge(anchor)?.remove();
+/** 移除 root 子树里的全部角标。 */
+export function removeBadge(root: HTMLElement): void {
+  for (const badge of findBadges(root)) badge.remove();
 }
 
-/** 新建或就地更新角标。同一个 anchor 上始终只有一个角标。 */
-export function upsertBadge(anchor: HTMLElement, options: BadgeOptions): void {
+/** 角标内部结构：一个「豆」字，后面跟评分。 */
+function buildContent(badge: HTMLElement): void {
+  const logo = document.createElement('span');
+  logo.className = 'dbr-logo';
+  logo.textContent = '豆';
+  const value = document.createElement('span');
+  value.className = 'dbr-value';
+  // 整体重建而不是增量修补：结构一旦漂移（多出一个 logo 之类），
+  // 下一次更新就能自愈，不必依赖"当初是怎么建出来的"。
+  badge.replaceChildren(logo, value);
+}
+
+/**
+ * 新建或就地更新角标。
+ *
+ * scope 用于跨挂载点去重：传入整张卡片时，会把卡片上其它位置的残留角标一并
+ * 清掉，保证一张卡片上任何时候都只有一个角标。
+ */
+export function upsertBadge(anchor: HTMLElement, options: BadgeOptions, scope?: HTMLElement): void {
   const { variant, position, identity, state } = options;
 
-  let badge = findBadge(anchor);
+  const existing = findBadges(scope ?? anchor);
+  let badge = existing.find((item) => item.parentElement === anchor);
+  // 挂在别处的残留角标全部清掉。
+  for (const stale of existing) if (stale !== badge) stale.remove();
+
   if (!badge) {
     badge = document.createElement('div');
-    badge.className = BADGE_CLASS;
-    const logo = document.createElement('span');
-    logo.className = 'dbr-logo';
-    logo.textContent = '豆';
-    const value = document.createElement('span');
-    value.className = 'dbr-value';
-    badge.append(logo, value);
-
-    if (variant === 'card') {
-      // 绝对定位需要一个定位参考系；Netflix 的封面容器不一定有。
-      const computed = window.getComputedStyle(anchor);
-      if (computed.position === 'static') anchor.style.position = 'relative';
-    }
     anchor.append(badge);
+  }
+  buildContent(badge);
+
+  if (variant === 'card') {
+    // 绝对定位需要一个定位参考系；Netflix 的封面容器不一定有。
+    const computed = window.getComputedStyle(anchor);
+    if (computed.position === 'static') anchor.style.position = 'relative';
   }
 
   badge.setAttribute(IDENTITY_ATTR, identity);

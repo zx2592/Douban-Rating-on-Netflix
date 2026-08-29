@@ -58,8 +58,12 @@ export class RequestQueue {
   private currentBackoffMs = 0;
 
   constructor(options: QueueOptions = {}) {
-    this.minIntervalMs = options.minIntervalMs ?? 1200;
-    this.jitterMs = options.jitterMs ?? 400;
+    // 实测豆瓣对检索接口的匿名配额比预估紧得多：同一组查询词几分钟前还能
+    // 全部命中，反复测试之后就整体落空（suggest 返回空数组、完整搜索返回
+    // error_info「搜索访问太频繁」）。间隔宁可放宽 —— 慢一点出分，远好过
+    // 把配额打穿之后整页都没有分。
+    this.minIntervalMs = options.minIntervalMs ?? 2500;
+    this.jitterMs = options.jitterMs ?? 800;
     this.initialBackoffMs = options.initialBackoffMs ?? 30_000;
     this.maxBackoffMs = options.maxBackoffMs ?? 15 * 60_000;
     this.maxPending = options.maxPending ?? 40;

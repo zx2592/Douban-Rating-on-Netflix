@@ -123,10 +123,12 @@ async function processCard(card: HTMLElement): Promise<void> {
 
   const state = toBadgeState(outcome);
   if (!state || (state.kind === 'missing' && !settings.showUnrated)) {
-    removeBadge(anchor);
+    removeBadge(card);
     return;
   }
-  upsertBadge(anchor, { variant: 'card', position: settings.badgePosition, identity, state });
+  // 传整张卡片作为去重范围：anchor 的解析结果会随 Netflix 重渲染漂移，
+  // 不跨挂载点清理就会出现两个角标叠在封面同一个角上。
+  upsertBadge(anchor, { variant: 'card', position: settings.badgePosition, identity, state }, card);
 }
 
 async function processModal(modal: HTMLElement): Promise<void> {
@@ -171,8 +173,7 @@ function scan(): void {
       // 身份变了说明节点被 Netflix 回收复用了，要按新片子重新走一遍。
       if (card.getAttribute(IDENTITY_ATTR) === identity) continue;
 
-      const anchor = queryFirst(card, NETFLIX_SELECTORS.cardAnchor) ?? card;
-      removeBadge(anchor);
+      removeBadge(card);
       card.setAttribute(IDENTITY_ATTR, identity);
       viewportObserver.observe(card);
     }
