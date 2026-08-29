@@ -195,6 +195,11 @@ node scripts/imdb-probe.mjs --curl        # 不发请求，只打印等价的 cu
 
 跑完在终端给结论，同时把完整报告和**每个响应的原文**写进 `probe-out/`，把那个目录的内容发回来即可。
 
+**Windows 用户注意**（脚本已针对性处理）：
+
+- 中文 Windows 的 cmd 默认代码页是 936，Node 输出 UTF-8 会显示成乱码。先 `chcp 65001` 或改用 Windows Terminal。**乱码只影响终端显示，`probe-out/` 里的报告始终是正常的 UTF-8**，直接发那个即可。
+- `--curl` 会自动按平台生成：Windows 上用 `curl.exe`（PowerShell 里 `curl` 是 `Invoke-WebRequest` 的别名）、双引号、`^` 续行、`findstr` 代替 `grep`。POST 的请求体一律写成文件用 `-d @` 引用，不内联进命令行 —— JSON 里本来就有双引号，内联后在 cmd 里会被 MSVCRT 的参数规则拆散，在 PowerShell 里 `$` 又会被当变量展开，写成文件是唯一三种终端都能跑的形式。
+
 两个容易踩的坑，脚本会主动提醒：
 
 - **Node 的内置 fetch 默认不读 `HTTPS_PROXY`**（浏览器和 curl 会读）。所以「浏览器能打开 imdb.com，但脚本全红」完全可能，那不代表接口挂了。用代理时要 `NODE_USE_ENV_PROXY=1 node scripts/imdb-probe.mjs`，或者改用 `--curl` 打印命令手动打一发。

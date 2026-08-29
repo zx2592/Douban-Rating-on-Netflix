@@ -62,6 +62,7 @@ if (typeof fetch !== 'function') {
  */
 const proxyEnv = process.env.HTTPS_PROXY ?? process.env.https_proxy ?? null;
 const usingEnvProxy = process.env.NODE_USE_ENV_PROXY === '1';
+const IS_WINDOWS = process.platform === 'win32';
 
 // ------------------------------------------------------------------ 探测样本
 
@@ -145,6 +146,15 @@ const SEARCH_ENDPOINTS = [
       }`,
       variables: { q },
     }),
+    // --curl 专用：不带 $ 变量的等价写法。PowerShell 会把双引号里的 $q
+    // 当成变量展开成空串，把查询改坏 —— 而报错信息完全看不出是这个原因。
+    curlPost: (q) => ({
+      query: `{ mainSearch(first: 5, options: { searchTerm: ${JSON.stringify(q)}, type: TITLE }) {
+        edges { node { entity { ... on Title {
+          id titleText { text } releaseYear { year } titleType { id }
+          ratingsSummary { aggregateRating voteCount }
+        } } } } } }`,
+    }),
   },
 ];
 
@@ -158,6 +168,9 @@ const RATING_ENDPOINTS = [
     post: (id) => ({
       query: 'query T($id: ID!) { title(id: $id) { ratingsSummary { aggregateRating voteCount } } }',
       variables: { id },
+    }),
+    curlPost: (id) => ({
+      query: `{ title(id: ${JSON.stringify(id)}) { ratingsSummary { aggregateRating voteCount } } }`,
     }),
   },
   {
@@ -687,45 +700,75 @@ function conclude(searchTable, ratingTable) {
  * 但你怀疑网络其实是通的，用 curl 手动打一发就能立刻分清是「接口不可用」
  * 还是「Node 出不去网」—— 这两件事的应对完全不同。
  */
-function printCurl() {
-  line('把下面的命令逐条粘进终端。curl 会读 HTTPS_PROXY，Node 的 fetch 不会。\n');
+async function printCurl() {
+  line('把下面的命令逐条粘进终端。curl 会读 HTTPS_PROXY，Node 的 fetch 不会。');
+  if (IS_WINDOWS) {
+    line('（已按 Windows 生成：双引号 + curl.exe。PowerShell 里 curl 是');
+    line('  Invoke-WebRequest 的别名，所以必须写成 curl.exe。）');
+  }
+  line('');
+
+  // cmd.exe / PowerShell 不认单引号，Linux/macOS 的 shell 不认反斜杠转义的
+  // 双引号 —— 两边的引号规则不兼容，只能分开生成。
+  const q = (text) =>
+    IS_WINDOWS ? `"${String(text).replace(/"/g, '\\"')}"` : `'${String(text).replace(/'/g, `'\\''`)}'`;
+  const CURL = IS_WINDOWS ? 'curl.exe' : 'curl';
+  const CONT = IS_WINDOWS ? '^' : '\\';
+
+  /**
+   * POST 的请求体一律写成文件，用 -d @文件 引用，而不是内联进命令行。
+   *
+   * 内联是行不通的：JSON 里本来就有双引号，Windows 上再套一层双引号之后
+   * 会变成 \\" —— cmd.exe 的参数解析（MSVCRT 规则）会把它当成"一个反斜杠 +
+   * 一个结束引号"，命令直接散架。换成单引号又轮到 PowerShell 不认。
+   * 写成文件就绕过了所有 shell 的引号规则，三种终端里都一样能跑。
+   */
+  const bodyFiles = [];
+  const write = (label, url, body, extra = '', fileHint = '') => {
+    line(`\n# ${label}`);
+    const parts = [`${CURL} -sS -m 20 -w ${q('\\nHTTP %{http_code} %{size_download}B %{time_total}s\\n')}`];
+    parts.push(`  -A ${q(CHROME_UA)}`);
+    if (body) {
+      const name = `body-${fileHint}.json`;
+      bodyFiles.push({ name, content: JSON.stringify(body, null, 2) });
+      parts.push(`  -H ${q('Content-Type: application/json')}`);
+      parts.push(`  -d @probe-out/${name}`);
+    }
+    parts.push(`  ${q(url)}${extra}`);
+    line(parts.join(` ${CONT}\n`));
+  };
 
   line('# 检索入口');
   for (const endpoint of SEARCH_ENDPOINTS) {
-    const q = 'Breaking Bad';
-    line(`\n# ${endpoint.label}`);
-    if (endpoint.post) {
-      const body = JSON.stringify(endpoint.post(q)).replace(/'/g, `'\\''`);
-      line(
-        `curl -sS -m 15 -w '\\nHTTP %{http_code} %{size_download}B %{time_total}s\\n' \\\n` +
-          `  -H 'Content-Type: application/json' -A '${CHROME_UA}' \\\n` +
-          `  -d '${body}' \\\n  '${endpoint.url(q)}' | head -c 800`,
-      );
-    } else {
-      line(
-        `curl -sS -m 15 -w '\\nHTTP %{http_code} %{size_download}B %{time_total}s\\n' \\\n` +
-          `  -A '${CHROME_UA}' '${endpoint.url(q)}' | head -c 800`,
-      );
-    }
+    const term = 'Breaking Bad';
+    const build = endpoint.curlPost ?? endpoint.post;
+    write(endpoint.label, endpoint.url(term), build ? build(term) : null, '', endpoint.id);
   }
 
   line('\n\n# 取分路径');
   for (const endpoint of RATING_ENDPOINTS) {
-    line(`\n# ${endpoint.label}`);
-    if (endpoint.post) {
-      const body = JSON.stringify(endpoint.post(SAMPLE.id)).replace(/'/g, `'\\''`);
+    // HTML 页面有 1–2MB，别把整页倒进终端。Windows 上没有 grep，
+    // 改成存盘再让用户自己搜 —— 比给一条跑不起来的命令强。
+    // 三条 HTML 路径各存各的文件，否则后一条会把前一条覆盖掉，
+    // 想对比"哪个页面里有评分"就无从比起。
+    const file = `imdb-${endpoint.id}.html`;
+    const extra = endpoint.kind === 'html' ? ` -o ${file}` : '';
+    const build = endpoint.curlPost ?? endpoint.post;
+    write(endpoint.label, endpoint.url(SAMPLE.id), build ? build(SAMPLE.id) : null, extra, endpoint.id);
+    if (endpoint.kind === 'html') {
       line(
-        `curl -sS -m 15 -w '\\nHTTP %{http_code} %{size_download}B\\n' \\\n` +
-          `  -H 'Content-Type: application/json' -A '${CHROME_UA}' \\\n` +
-          `  -d '${body}' \\\n  '${endpoint.url(SAMPLE.id)}'`,
-      );
-    } else {
-      // HTML 页面只看有没有 aggregateRating，不必把整页倒出来。
-      line(
-        `curl -sS -m 20 -A '${CHROME_UA}' '${endpoint.url(SAMPLE.id)}' \\\n` +
-          `  | grep -o 'aggregateRating.\\{0,120\\}' | head -3`,
+        IS_WINDOWS
+          ? `#   ↑ 存成 ${file}，然后：findstr /C:"aggregateRating" ${file}`
+          : `#   ↑ 存成 ${file}，然后：grep -o 'aggregateRating.\\{0,120\\}' ${file} | head -3`,
       );
     }
+  }
+
+  if (bodyFiles.length > 0) {
+    await mkdir(outDir, { recursive: true });
+    for (const file of bodyFiles) await writeFile(resolve(outDir, file.name), file.content);
+    line(`\n# 已把 ${bodyFiles.length} 个 POST 请求体写进 probe-out/，命令里用 -d @ 引用。`);
+    line('# 请在项目根目录（能看到 probe-out 的那一层）执行上面的命令。');
   }
   line('');
 }
@@ -818,10 +861,16 @@ function selfTest() {
 // ------------------------------------------------------------------------ 主流程
 
 async function main() {
-  if (flag('curl')) return printCurl();
+  if (flag('curl')) return await printCurl();
   if (flag('self-test')) return selfTest();
 
   line('IMDb 取数路径探测  ·  Node ' + process.version);
+  if (IS_WINDOWS) {
+    // 中文 Windows 的 cmd 默认代码页是 936，Node 输出 UTF-8 会变成乱码。
+    // 不影响结果 —— probe-out/ 里的文件始终是 UTF-8 的。
+    line('提示：若下面的中文是乱码，先执行  chcp 65001  再重跑（或改用 Windows Terminal）。');
+    line('     乱码只影响终端显示，probe-out/ 里的报告始终是正常的 UTF-8。');
+  }
   line(`超时 ${TIMEOUT_MS}ms` + (proxyEnv ? ` · 检测到 HTTPS_PROXY=${proxyEnv}` : '') +
     (usingEnvProxy ? ' · 已开启 NODE_USE_ENV_PROXY' : ''));
   if (proxyEnv && !usingEnvProxy) {
