@@ -18,7 +18,20 @@
       <button id="rerun" type="button" disabled>重新运行</button>
       <span class="copied" id="copied" hidden>已复制</span>
     </div>
-    <textarea id="out" readonly rows="24" placeholder="结果会显示在这里"></textarea>
+    <textarea id="out" readonly rows="14" placeholder="结果会显示在这里"></textarea>
+
+    <h2>单片排查</h2>
+    <p class="lead">
+      输入 Netflix 上显示的片名（英文或中文都行），实时跑一遍真实的检索和匹配，
+      展示每个候选条目的得分和取舍原因 —— 哪一步出的问题一目了然。
+    </p>
+    <div class="trace-form">
+      <input id="traceTitle" type="text" placeholder="片名，例如 Breaking Bad" />
+      <input id="traceYear" type="text" inputmode="numeric" placeholder="年份(可选)" />
+      <button id="traceRun" type="button">排查</button>
+      <button id="traceCopy" type="button" disabled>复制</button>
+    </div>
+    <textarea id="traceOut" readonly rows="20" placeholder="排查结果会显示在这里"></textarea>
     <script src="probe.js"></script>
   </body>
 </html>

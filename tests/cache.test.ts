@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   cacheKey,
+  sweepLegacyEntries,
   FOUND_TTL_MS,
   NOT_FOUND_TTL_MS,
   RatingCache,
@@ -78,22 +79,22 @@ describe('RatingCache 读写', () => {
   it('写入后能读出来', async () => {
     const storage = memoryStorage();
     const cache = new RatingCache(storage);
-    cache.set('r:a', rating);
-    expect((await cache.get('r:a'))?.rating).toEqual(rating);
+    cache.set('r2:a', rating);
+    expect((await cache.get('r2:a'))?.rating).toEqual(rating);
   });
 
   it('未命中结果也会被缓存，避免反复打豆瓣', async () => {
     const storage = memoryStorage();
     const cache = new RatingCache(storage);
-    cache.set('r:none', null);
-    const entry = await cache.get('r:none');
+    cache.set('r2:none', null);
+    const entry = await cache.get('r2:none');
     expect(entry).toBeDefined();
     expect(entry?.rating).toBeNull();
   });
 
   it('没写过的键返回 undefined', async () => {
     const cache = new RatingCache(memoryStorage());
-    expect(await cache.get('r:missing')).toBeUndefined();
+    expect(await cache.get('r2:missing')).toBeUndefined();
   });
 
   it('多次写入合并成一次落盘', async () => {
@@ -101,9 +102,9 @@ describe('RatingCache 读写', () => {
     const setSpy = vi.spyOn(storage, 'set');
     const cache = new RatingCache(storage, () => Date.now(), 800);
 
-    cache.set('r:a', rating);
-    cache.set('r:b', rating);
-    cache.set('r:c', null);
+    cache.set('r2:a', rating);
+    cache.set('r2:b', rating);
+    cache.set('r2:c', null);
     expect(setSpy).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(800);
@@ -114,11 +115,11 @@ describe('RatingCache 读写', () => {
   it('service worker 重启后（内存丢失）仍能从存储里读回', async () => {
     const storage = memoryStorage();
     const first = new RatingCache(storage);
-    first.set('r:a', rating);
+    first.set('r2:a', rating);
     await first.flush();
 
     const restarted = new RatingCache(storage);
-    expect((await restarted.get('r:a'))?.rating).toEqual(rating);
+    expect((await restarted.get('r2:a'))?.rating).toEqual(rating);
   });
 });
 
@@ -128,14 +129,14 @@ describe('RatingCache 过期', () => {
     const storage = memoryStorage();
     const cache = new RatingCache(storage, () => time);
 
-    cache.set('r:a', rating);
+    cache.set('r2:a', rating);
     await cache.flush();
 
     time += FOUND_TTL_MS - 1;
-    expect(await cache.get('r:a')).toBeDefined();
+    expect(await cache.get('r2:a')).toBeDefined();
 
     time += 2;
-    expect(await cache.get('r:a')).toBeUndefined();
+    expect(await cache.get('r2:a')).toBeUndefined();
   });
 
   it('未命中结果的 TTL 明显更短', async () => {
@@ -143,11 +144,11 @@ describe('RatingCache 过期', () => {
     const storage = memoryStorage();
     const cache = new RatingCache(storage, () => time);
 
-    cache.set('r:none', null);
+    cache.set('r2:none', null);
     await cache.flush();
 
     time += NOT_FOUND_TTL_MS + 1;
-    expect(await cache.get('r:none')).toBeUndefined();
+    expect(await cache.get('r2:none')).toBeUndefined();
     // 同样的时间跨度下，命中结果应该还活着。
     expect(NOT_FOUND_TTL_MS).toBeLessThan(FOUND_TTL_MS);
   });
@@ -156,12 +157,12 @@ describe('RatingCache 过期', () => {
     let time = 1_000_000;
     const storage = memoryStorage();
     const cache = new RatingCache(storage, () => time);
-    cache.set('r:a', rating);
+    cache.set('r2:a', rating);
     await cache.flush();
 
     time += FOUND_TTL_MS + 1;
-    await cache.get('r:a');
-    expect(storage.data.has('r:a')).toBe(false);
+    await cache.get('r2:a');
+    expect(storage.data.has('r2:a')).toBe(false);
   });
 });
 
@@ -170,20 +171,20 @@ describe('RatingCache 清理', () => {
     const storage = memoryStorage();
     storage.data.set('settings', { enabled: true });
     const cache = new RatingCache(storage);
-    cache.set('r:a', rating);
-    cache.set('r:b', rating);
+    cache.set('r2:a', rating);
+    cache.set('r2:b', rating);
     await cache.flush();
 
     expect(await cache.clear()).toBe(2);
     expect(storage.data.has('settings')).toBe(true);
-    expect(await cache.get('r:a')).toBeUndefined();
+    expect(await cache.get('r2:a')).toBeUndefined();
   });
 
   it('size 只统计评分条目', async () => {
     const storage = memoryStorage();
     storage.data.set('settings', {});
     const cache = new RatingCache(storage);
-    cache.set('r:a', rating);
+    cache.set('r2:a', rating);
     await cache.flush();
     expect(await cache.size()).toBe(1);
   });
@@ -196,22 +197,43 @@ describe('RatingCache 清理', () => {
     // 预置 4001 条历史记录，写入时间依次递增但都早于当前时刻，
     // 这样接下来 set 进去的那条才是最新的。
     for (let i = 0; i < 4001; i += 1) {
-      storage.data.set(`r:${i}`, { at: time - 5000 + i, rating });
+      storage.data.set(`r2:${i}`, { at: time - 5000 + i, rating });
     }
-    cache.set('r:new', rating);
+    cache.set('r2:new', rating);
     await cache.flush();
 
     const remaining = await cache.size();
     expect(remaining).toBeLessThan(4002);
     // 最老的那条应该首先被淘汰，最新写入的应该还在。
-    expect(storage.data.has('r:0')).toBe(false);
-    expect(storage.data.has('r:new')).toBe(true);
+    expect(storage.data.has('r2:0')).toBe(false);
+    expect(storage.data.has('r2:new')).toBe(true);
   });
 
   it('存储里的脏数据不会让读取崩掉', async () => {
     const storage = memoryStorage();
-    storage.data.set('r:bad', 'not an entry');
+    storage.data.set('r2:bad', 'not an entry');
     const cache = new RatingCache(storage);
-    expect(await cache.get('r:bad')).toBeUndefined();
+    expect(await cache.get('r2:bad')).toBeUndefined();
+  });
+});
+
+describe('sweepLegacyEntries', () => {
+  it('清掉旧版本前缀的键，保留新版本和无关数据', async () => {
+    const storage = memoryStorage();
+    storage.data.set('r:老的未收录', { at: 1, rating: null });
+    storage.data.set('r:老的评分', { at: 1, rating });
+    storage.data.set('r2:新条目', { at: 1, rating });
+    storage.data.set('settings', { enabled: true });
+
+    expect(await sweepLegacyEntries(storage)).toBe(2);
+    expect(storage.data.has('r:老的未收录')).toBe(false);
+    expect(storage.data.has('r2:新条目')).toBe(true);
+    expect(storage.data.has('settings')).toBe(true);
+  });
+
+  it('没有旧键时不动存储', async () => {
+    const storage = memoryStorage();
+    storage.data.set('r2:a', { at: 1, rating });
+    expect(await sweepLegacyEntries(storage)).toBe(0);
   });
 });

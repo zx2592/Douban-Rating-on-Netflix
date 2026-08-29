@@ -16,7 +16,17 @@ export const FOUND_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** 未命中结果的有效期。豆瓣可能过几天就收录了，所以短一些。 */
 export const NOT_FOUND_TTL_MS = 12 * 60 * 60 * 1000;
 
-const KEY_PREFIX = 'r:';
+/**
+ * 缓存键前缀，末尾数字是缓存格式版本。
+ *
+ * 检索接口或匹配逻辑发生实质变化时必须递增：接口失效期间写进缓存的
+ * 「未收录」会存活 12 小时，接口修好后用户看到的还是旧的空结果。第一次
+ * 换接口时靠"请用户手动清缓存"来解决，用户没清，白白多排查了一轮 ——
+ * 失效必须自动发生，不能依赖人工操作。旧版本的键由 sweepLegacyEntries
+ * 在启动时清除。
+ */
+const KEY_PREFIX = 'r2:';
+const LEGACY_KEY_PATTERN = /^r:/;
 const MAX_ENTRIES = 4000;
 /** 超出上限时一次清掉这么多比例的老条目，避免每写一条都要清理一次。 */
 const PRUNE_RATIO = 0.25;
@@ -160,6 +170,16 @@ export class RatingCache {
     for (const key of doomed) this.memory.delete(key);
     await this.storage.remove(doomed);
   }
+}
+
+/** 启动时清掉旧版本缓存键，返回清除数量。 */
+export async function sweepLegacyEntries(storage: StorageArea): Promise<number> {
+  const all = await storage.get(null);
+  const doomed = Object.keys(all).filter(
+    (key) => LEGACY_KEY_PATTERN.test(key) && !key.startsWith(KEY_PREFIX),
+  );
+  if (doomed.length > 0) await storage.remove(doomed);
+  return doomed.length;
 }
 
 /** 包一层 chrome.storage.local，使其符合 StorageArea。 */

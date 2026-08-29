@@ -1,4 +1,4 @@
-import { chromeLocalStorage, RatingCache } from './cache';
+import { chromeLocalStorage, RatingCache, sweepLegacyEntries } from './cache';
 import { runProbe } from '../shared/probe';
 import { DoubanClient } from './douban/client';
 import { RatingLookup } from './lookup';
@@ -14,6 +14,9 @@ import type { LookupOutcome } from '../shared/types';
  * 所有模块都建成「无状态可重建」的：队列和内存缓存丢了不影响正确性，
  * 落盘的评分缓存在 chrome.storage.local 里，重启后照常命中。
  */
+
+// 清理旧版本的缓存条目（接口失效期间写入的「未收录」不能等 12 小时 TTL）。
+void sweepLegacyEntries(chromeLocalStorage());
 
 const queue = new RequestQueue();
 const cache = new RatingCache(chromeLocalStorage());
