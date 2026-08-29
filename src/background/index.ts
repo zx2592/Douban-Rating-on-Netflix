@@ -1,5 +1,5 @@
 import { chromeLocalStorage, RatingCache } from './cache';
-import { probeDouban } from './probe';
+import { runProbe } from '../shared/probe';
 import { DoubanClient } from './douban/client';
 import { RatingLookup } from './lookup';
 import { RequestQueue } from './queue';
@@ -55,6 +55,8 @@ chrome.runtime.onMessage.addListener((request: ExtensionRequest, _sender, sendRe
   return true;
 });
 
-// 临时诊断入口：在 service worker 的 Console 里执行 probeDouban()，
-// 打印豆瓣两个检索入口的真实响应。定完检索方案后连同 probe.ts 一起删掉。
-(globalThis as unknown as { probeDouban: typeof probeDouban }).probeDouban = probeDouban;
+// 备用的 Console 诊断入口。正式入口是扩展弹窗里的「检索接口诊断」页面 ——
+// 那里不需要找 service worker 的检查视图，也不会遇到执行上下文的问题。
+(globalThis as unknown as { probeDouban: () => Promise<void> }).probeDouban = async () => {
+  console.log(await runProbe());
+};

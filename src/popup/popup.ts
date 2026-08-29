@@ -16,6 +16,7 @@ const controls = {
   details: byId<HTMLDivElement>('details'),
   status: byId<HTMLDivElement>('status'),
   clearCache: byId<HTMLButtonElement>('clearCache'),
+  openProbe: byId<HTMLButtonElement>('openProbe'),
 };
 
 function render(settings: Settings): void {
@@ -71,6 +72,12 @@ controls.clearCache.addEventListener('click', () => {
       controls.clearCache.disabled = false;
     }
   })();
+});
+
+// 用 tabs.create 而不是普通链接：弹窗一失焦就会关闭，普通链接的新标签
+// 有时来不及打开。
+controls.openProbe.addEventListener('click', () => {
+  void chrome.tabs.create({ url: chrome.runtime.getURL('probe.html') });
 });
 
 void (async () => {

@@ -122,6 +122,21 @@ input[type='checkbox'] {
 .clear:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .clear:disabled { opacity: 0.5; cursor: default; }
 
+.diag {
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px;
+  border: 1px dashed var(--line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.diag:hover { border-color: var(--accent); color: var(--accent); }
+
 .hint {
   margin: 10px 0 0;
   color: var(--muted);

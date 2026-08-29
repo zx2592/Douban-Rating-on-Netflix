@@ -28,8 +28,19 @@ async function get(url: string): Promise<{ status: number; body: string; finalUr
 
 const gap = (): Promise<void> => new Promise((r) => setTimeout(r, 1500));
 
-export async function probeDouban(): Promise<void> {
+export const PROBE_TOTAL = CASES.length + CASES.length - 1;
+
+/**
+ * 跑完整套探测，返回可直接复制回报的纯文本。
+ * onProgress 用于让诊断页面边跑边显示进度，不必干等十几秒。
+ */
+export async function runProbe(onProgress?: (done: number, total: number, label: string) => void): Promise<string> {
   const report: string[] = [];
+  let done = 0;
+  const tick = (label: string): void => {
+    done += 1;
+    onProgress?.(done, PROBE_TOTAL, label);
+  };
 
   report.push('===== subject_suggest（当前在用的接口）=====');
   for (const item of CASES) {
@@ -54,6 +65,7 @@ export async function probeDouban(): Promise<void> {
     } catch (error) {
       report.push(`[${item.label}] "${item.q}" → 失败: ${String(error)}`);
     }
+    tick(`suggest · ${item.label}`);
   }
 
   report.push('', '===== search.douban.com 完整搜索（候选方案）=====');
@@ -71,7 +83,8 @@ export async function probeDouban(): Promise<void> {
     } catch (error) {
       report.push(`[${item.label}] "${item.q}" → 失败: ${String(error)}`);
     }
+    tick(`search · ${item.label}`);
   }
 
-  console.log(report.join('\n'));
+  return report.join('\n');
 }

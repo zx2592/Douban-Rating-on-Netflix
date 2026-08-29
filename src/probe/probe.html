@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>豆瓣检索接口诊断</title>
+    <link rel="stylesheet" href="probe.css" />
+  </head>
+  <body>
+    <h1>豆瓣检索接口诊断</h1>
+    <p class="lead">
+      打开即自动运行，约 20 秒。跑完点「复制结果」，把内容发回给开发者。
+      不需要打开 DevTools。
+    </p>
+    <div class="progress"><div class="bar" id="bar"></div></div>
+    <p class="status" id="status">准备中…</p>
+    <div class="actions">
+      <button id="copy" type="button" disabled>复制结果</button>
+      <button id="rerun" type="button" disabled>重新运行</button>
+      <span class="copied" id="copied" hidden>已复制</span>
+    </div>
+    <textarea id="out" readonly rows="24" placeholder="结果会显示在这里"></textarea>
+    <script src="probe.js"></script>
+  </body>
+</html>

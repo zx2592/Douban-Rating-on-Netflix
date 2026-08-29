@@ -22,6 +22,8 @@ const staticFiles = [
   ['src/popup/popup.html', 'popup.html'],
   ['src/popup/popup.css', 'popup.css'],
   ['src/content/badge.css', 'badge.css'],
+  ['src/probe/probe.html', 'probe.html'],
+  ['src/probe/probe.css', 'probe.css'],
   ['icons', 'icons'],
 ];
 
@@ -41,6 +43,12 @@ const bundles = [
   {
     entryPoints: [resolve(root, 'src/popup/popup.ts')],
     outfile: resolve(outDir, 'popup.js'),
+    format: 'iife',
+  },
+  {
+    // 临时的检索接口诊断页，定完检索方案后连同 src/probe/ 一起删掉。
+    entryPoints: [resolve(root, 'src/probe/probe.ts')],
+    outfile: resolve(outDir, 'probe.js'),
     format: 'iife',
   },
 ];
