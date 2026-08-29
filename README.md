@@ -96,6 +96,8 @@ Netflix 是没有公开契约的商业站点。所有 DOM 知识都集中在 `sr
 
 内容脚本带了自检：打开页面 8 秒后若一张卡片都没找到，会在 Console 打出一条警告。想看详细日志，在 Netflix 页面的 Console 里执行 `localStorage.setItem('dbr:debug', '1')` 后刷新。
 
+**先确认跑的是哪一版。** `npm run build` 会打印一个版本戳，内容脚本把同一个戳写在 `<html data-dbr-loaded>` 上。在 Netflix 页面 Console 里执行 `document.documentElement.dataset.dbrLoaded`，两者一致才说明新代码真的生效了。加这个是因为排查时反复踩同一个坑：`git pull` 不会自动重建，重建后还要去 `chrome://extensions` 点刷新，三步缺一不可 —— 而少做一步和「代码有 bug」在表现上完全一样，为此白白多绕了几轮。
+
 ## 隐私
 
 扩展只做两件涉及网络的事：把影片标题发给豆瓣做检索、取回评分。没有任何数据上报到第三方，评分缓存只存在浏览器本地的 `chrome.storage.local` 里。

@@ -53,8 +53,12 @@ const bundles = [
   },
 ];
 
+/** 构建版本戳：注入进产物，页面上可查，用于确认「跑的是哪一版」。 */
+const buildId = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+
 const shared = {
   bundle: true,
+  define: { __BUILD_ID__: JSON.stringify(buildId) },
   target: 'chrome110',
   platform: 'browser',
   logLevel: 'info',
@@ -77,6 +81,9 @@ async function main() {
   if (!watch) {
     await Promise.all(bundles.map((bundle) => build({ ...shared, ...bundle })));
     console.log(`构建完成 → ${outDir}`);
+    console.log(`版本戳 ${buildId}`);
+    console.log('在 Netflix 页面 Console 里执行 document.documentElement.dataset.dbrLoaded');
+    console.log('应当返回同一个版本戳；不一致说明扩展还没重新加载。');
     console.log('在 chrome://extensions 打开开发者模式，点「加载已解压的扩展程序」选择 dist 目录。');
     return;
   }

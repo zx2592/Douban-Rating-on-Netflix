@@ -1,4 +1,5 @@
 import { removeBadge, upsertBadge, type BadgeState } from '../badge';
+import { BUILD_ID } from '../../shared/build-info';
 import { sendRequest } from '../../shared/messages';
 import { DEFAULT_SETTINGS, loadSettings, onSettingsChanged, type Settings } from '../../shared/settings';
 import type { LookupOutcome, MediaQuery } from '../../shared/types';
@@ -45,14 +46,18 @@ function debug(...args: unknown[]): void {
 }
 
 /**
- * 脚本一加载就在 <html> 上打个标记。
+ * 脚本一加载就在 <html> 上打上构建版本戳。
  *
- * 排查「页面上什么都没出现」时，第一个要区分的就是「脚本压根没注入」还是
- * 「注入了但没找到卡片」。没有这个标记，这两种情况从页面 Console 里看起来
- * 一模一样。放在模块顶层而不是 start() 里，这样即使后续初始化抛异常，
- * 标记依然在。
+ * 两个用途：
+ * 1. 区分「脚本压根没注入」和「注入了但没找到卡片」—— 没有标记的话，这两种
+ *    情况从页面 Console 里看起来一模一样。
+ * 2. 确认「跑的是哪一版」。git pull 不会自动重建，重建后还要去扩展页点刷新，
+ *    少做一步和「代码有 bug」在表现上完全一致，排查时为此绕过弯路。把
+ *    npm run build 打印的版本戳和这里的值一比即可。
+ *
+ * 放在模块顶层而不是 start() 里，这样即使后续初始化抛异常，标记依然在。
  */
-document.documentElement.setAttribute('data-dbr-loaded', '1');
+document.documentElement.setAttribute('data-dbr-loaded', BUILD_ID);
 
 let settings: Settings = DEFAULT_SETTINGS;
 let scanTimer: ReturnType<typeof setTimeout> | null = null;
