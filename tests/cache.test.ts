@@ -7,7 +7,7 @@ import {
   RatingCache,
   type StorageArea,
 } from '../src/background/cache';
-import type { DoubanRating, MediaQuery } from '../src/shared/types';
+import type { Rating, MediaQuery } from '../src/shared/types';
 
 /** chrome.storage.local 的内存替身。 */
 function memoryStorage(): StorageArea & { data: Map<string, unknown> } {
@@ -30,7 +30,8 @@ function memoryStorage(): StorageArea & { data: Map<string, unknown> } {
   };
 }
 
-const rating: DoubanRating = {
+const rating: Rating = {
+  source: 'douban',
   id: '35131346',
   title: '河边的错误',
   score: 7.4,

@@ -12,6 +12,8 @@ const controls = {
   showOnCards: byId<HTMLInputElement>('showOnCards'),
   showOnDetail: byId<HTMLInputElement>('showOnDetail'),
   showUnrated: byId<HTMLInputElement>('showUnrated'),
+  sourceDouban: byId<HTMLInputElement>('sourceDouban'),
+  sourceImdb: byId<HTMLInputElement>('sourceImdb'),
   badgePosition: byId<HTMLSelectElement>('badgePosition'),
   details: byId<HTMLDivElement>('details'),
   status: byId<HTMLDivElement>('status'),
@@ -24,6 +26,8 @@ function render(settings: Settings): void {
   controls.showOnCards.checked = settings.showOnCards;
   controls.showOnDetail.checked = settings.showOnDetail;
   controls.showUnrated.checked = settings.showUnrated;
+  controls.sourceDouban.checked = settings.sources.douban;
+  controls.sourceImdb.checked = settings.sources.imdb;
   controls.badgePosition.value = settings.badgePosition;
   // 总开关关掉时，把下面的细项一起置灰，避免让人以为改了会生效。
   controls.details.classList.toggle('is-disabled', !settings.enabled);
@@ -47,7 +51,8 @@ async function refreshStatus(): Promise<void> {
     const backoff = describeBackoff(status.backoffUntil);
     // 关注数只在真有记录时才提，0 的时候多一句 "关注 0 部" 只是噪音。
     const interest = status.interestEntries > 0 ? ` · 关注 ${status.interestEntries} 部` : '';
-    controls.status.textContent = backoff ?? `已缓存 ${status.cachedEntries} 条评分${interest}`;
+    const cached = `已缓存 豆瓣 ${status.doubanEntries} · IMDb ${status.imdbEntries}`;
+    controls.status.textContent = backoff ?? `${cached}${interest}`;
     controls.status.classList.toggle('is-warning', backoff !== null);
   } catch {
     controls.status.textContent = '无法连接到扩展后台';
@@ -59,6 +64,13 @@ controls.enabled.addEventListener('change', () => void update({ enabled: control
 controls.showOnCards.addEventListener('change', () => void update({ showOnCards: controls.showOnCards.checked }));
 controls.showOnDetail.addEventListener('change', () => void update({ showOnDetail: controls.showOnDetail.checked }));
 controls.showUnrated.addEventListener('change', () => void update({ showUnrated: controls.showUnrated.checked }));
+// 来源开关关掉即不再为它发请求，不只是隐藏显示。
+controls.sourceDouban.addEventListener('change', () =>
+  void update({ sources: { douban: controls.sourceDouban.checked, imdb: controls.sourceImdb.checked } }),
+);
+controls.sourceImdb.addEventListener('change', () =>
+  void update({ sources: { douban: controls.sourceDouban.checked, imdb: controls.sourceImdb.checked } }),
+);
 controls.badgePosition.addEventListener('change', () =>
   void update({ badgePosition: controls.badgePosition.value as BadgePosition }),
 );

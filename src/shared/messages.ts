@@ -1,6 +1,6 @@
-import type { LookupOutcome, MediaQuery } from './types';
+import type { MediaQuery, RatingsOutcome } from './types';
 
-/** 内容脚本 → background：查一部片子的豆瓣评分。 */
+/** 内容脚本 → background：查一部片子在各来源上的评分。 */
 export interface LookupRequest {
   kind: 'lookup';
   query: MediaQuery;
@@ -34,7 +34,10 @@ export type ExtensionRequest =
   | InterestRequest;
 
 export interface StatusResponse {
+  /** 两个来源合计的缓存条数。 */
   cachedEntries: number;
+  doubanEntries: number;
+  imdbEntries: number;
   /** 若正处于退避期，给出恢复时间戳（epoch ms）。 */
   backoffUntil: number | null;
   pendingRequests: number;
@@ -43,7 +46,7 @@ export interface StatusResponse {
 }
 
 export type ExtensionResponse =
-  | { kind: 'lookup'; outcome: LookupOutcome }
+  | { kind: 'lookup'; outcome: RatingsOutcome }
   | { kind: 'clearCache'; cleared: number }
   | { kind: 'status'; status: StatusResponse }
   | { kind: 'interest'; recorded: boolean };
@@ -55,7 +58,7 @@ export type ExtensionResponse =
  * "Receiving end does not exist"。这里统一兜住，转成一个可展示的 error，
  * 而不是让内容脚本里冒出一个未捕获的 promise rejection。
  */
-export async function sendRequest(request: LookupRequest): Promise<LookupOutcome>;
+export async function sendRequest(request: LookupRequest): Promise<RatingsOutcome>;
 export async function sendRequest(request: ClearCacheRequest): Promise<number>;
 export async function sendRequest(request: StatusRequest): Promise<StatusResponse>;
 export async function sendRequest(request: InterestRequest): Promise<boolean>;
@@ -76,7 +79,11 @@ export async function sendRequest(request: ExtensionRequest): Promise<unknown> {
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     if (request.kind === 'lookup') {
-      return { status: 'error', reason } satisfies LookupOutcome;
+      // 两个来源都记成错误：错在消息通道上，跟具体来源无关。
+      return {
+        douban: { status: 'error', reason },
+        imdb: { status: 'error', reason },
+      } satisfies RatingsOutcome;
     }
     // 记录兴趣只是一个锦上添花的信号，background 不在时静默失败即可，
     // 不值得让内容脚本因此抛错。

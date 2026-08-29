@@ -5,6 +5,11 @@ export interface Settings {
   enabled: boolean;
   /** 分站点开关。第一版只有 netflix，加站点时在这里扩展。 */
   sites: { netflix: boolean };
+  /**
+   * 分来源开关。关掉的来源不会产生任何网络请求 —— 这不只是隐藏显示，
+   * 也是省配额的手段。
+   */
+  sources: { douban: boolean; imdb: boolean };
   badgePosition: BadgePosition;
   /** 在列表页的封面卡片上显示角标。 */
   showOnCards: boolean;
@@ -17,6 +22,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   enabled: true,
   sites: { netflix: true },
+  sources: { douban: true, imdb: true },
   badgePosition: 'top-left',
   showOnCards: true,
   showOnDetail: true,
@@ -32,6 +38,7 @@ function withDefaults(stored: unknown): Settings {
     ...DEFAULT_SETTINGS,
     ...raw,
     sites: { ...DEFAULT_SETTINGS.sites, ...(raw.sites ?? {}) },
+    sources: { ...DEFAULT_SETTINGS.sources, ...(raw.sources ?? {}) },
   };
 }
 

@@ -2,13 +2,14 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <title>豆瓣评分 for Netflix</title>
+    <title>豆瓣 &amp; IMDb 评分 for Netflix</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <header class="head">
       <span class="logo">豆</span>
-      <h1>豆瓣评分 for Netflix</h1>
+      <span class="logo logo--imdb">IMDb</span>
+      <h1>评分 for Netflix</h1>
     </header>
 
     <label class="row row--main">
@@ -17,6 +18,16 @@
     </label>
 
     <div class="group" id="details">
+      <label class="row">
+        <span class="label">显示豆瓣评分</span>
+        <input type="checkbox" id="sourceDouban" />
+      </label>
+
+      <label class="row">
+        <span class="label">显示 IMDb 评分</span>
+        <input type="checkbox" id="sourceImdb" />
+      </label>
+
       <label class="row">
         <span class="label">在列表封面上显示</span>
         <input type="checkbox" id="showOnCards" />
@@ -28,7 +39,7 @@
       </label>
 
       <label class="row">
-        <span class="label">豆瓣未收录时也占位</span>
+        <span class="label">未收录时也占位</span>
         <input type="checkbox" id="showUnrated" />
       </label>
 
@@ -50,7 +61,8 @@
     <button class="diag" id="openProbe" type="button">检索接口诊断</button>
 
     <p class="hint">
-      修改后刷新 Netflix 页面即可生效。评分数据来自豆瓣，仅在本地缓存，不会上传到任何地方。
+      修改后刷新 Netflix 页面即可生效。评分数据来自豆瓣和 IMDb，仅在本地缓存，不会上传到任何地方。
+      关掉某个来源即不再为它发起任何请求。
     </p>
 
     <script src="popup.js"></script>

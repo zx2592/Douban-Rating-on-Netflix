@@ -55,6 +55,16 @@ body {
   font-weight: 700;
 }
 
+/* IMDb 用它自己的金黄色，和角标上保持一致 */
+.logo--imdb {
+  width: auto;
+  padding: 0 4px;
+  background: #f5c518;
+  color: #000;
+  font-size: 9px;
+  letter-spacing: 0.2px;
+}
+
 .row {
   display: flex;
   align-items: center;

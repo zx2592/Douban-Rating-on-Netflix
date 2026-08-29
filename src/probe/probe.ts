@@ -1,3 +1,4 @@
+import { IMDB_PROBE_TOTAL, runImdbProbe } from '../shared/imdb-probe';
 import { PROBE_TOTAL, runProbe } from '../shared/probe';
 
 /**
@@ -178,6 +179,49 @@ traceUi.copyBtn.addEventListener('click', () => {
       await navigator.clipboard.writeText(traceUi.out.value);
     } catch {
       traceUi.out.select();
+    }
+  })();
+});
+
+// ---- IMDb 取数路径诊断 ----
+//
+// 单独一个按钮而不是跟着页面自动跑：IMDb 那部分是新加的，不该拖慢原本
+// 用来排查豆瓣的流程；而且它需要用户主动发起，结果才好对应到一次操作上。
+
+const imdbUi = {
+  run: byId<HTMLButtonElement>('imdbRun'),
+  copyBtn: byId<HTMLButtonElement>('imdbCopy'),
+  status: byId<HTMLParagraphElement>('imdbStatus'),
+  out: byId<HTMLTextAreaElement>('imdbOut'),
+};
+
+async function runImdb(): Promise<void> {
+  imdbUi.run.disabled = true;
+  imdbUi.copyBtn.disabled = true;
+  imdbUi.out.value = '';
+  imdbUi.status.textContent = `运行中… 0 / ${IMDB_PROBE_TOTAL}`;
+
+  try {
+    imdbUi.out.value = await runImdbProbe((done, total, label) => {
+      imdbUi.status.textContent = `运行中… ${done} / ${total}　${label}`;
+    });
+    imdbUi.status.textContent = '完成。点「复制结果」把内容发回给开发者。';
+  } catch (error) {
+    imdbUi.out.value = `诊断本身出错了：${error instanceof Error ? (error.stack ?? error.message) : String(error)}`;
+    imdbUi.status.textContent = '运行失败，请把下面的错误信息发回。';
+  } finally {
+    imdbUi.run.disabled = false;
+    imdbUi.copyBtn.disabled = false;
+  }
+}
+
+imdbUi.run.addEventListener('click', () => void runImdb());
+imdbUi.copyBtn.addEventListener('click', () => {
+  void (async () => {
+    try {
+      await navigator.clipboard.writeText(imdbUi.out.value);
+    } catch {
+      imdbUi.out.select();
     }
   })();
 });

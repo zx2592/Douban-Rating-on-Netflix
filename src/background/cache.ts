@@ -1,5 +1,5 @@
 import { normalizeTitle, splitSeason } from '../shared/text';
-import type { DoubanRating, MediaQuery } from '../shared/types';
+import type { MediaQuery, Rating, RatingSource } from '../shared/types';
 
 /**
  * 评分缓存。
@@ -26,6 +26,12 @@ export const NOT_FOUND_TTL_MS = 12 * 60 * 60 * 1000;
  * 在启动时清除。
  */
 const KEY_PREFIX = 'r3:';
+/**
+ * IMDb 的缓存前缀。刻意和豆瓣分开：两边的接口、限流、失效节奏都不一样，
+ * 混在一个命名空间里会导致「清豆瓣缓存」连带把 IMDb 的一起清掉，
+ * 也没法只给其中一边做版本失效。
+ */
+const IMDB_KEY_PREFIX = 'i1:';
 const LEGACY_KEY_PATTERN = /^r\d*:/;
 const MAX_ENTRIES = 4000;
 /** 超出上限时一次清掉这么多比例的老条目，避免每写一条都要清理一次。 */
@@ -35,7 +41,7 @@ export interface CacheEntry {
   /** 写入时间戳。 */
   at: number;
   /** null 表示「查过，但豆瓣没有可信的匹配」。 */
-  rating: DoubanRating | null;
+  rating: Rating | null;
 }
 
 /** chrome.storage.local 的最小接口，抽出来是为了单测里能换成内存实现。 */
@@ -49,11 +55,17 @@ export interface StorageArea {
  * 缓存键。用归一化标题而不是原始标题，这样 "STRANGER THINGS" 和
  * "Stranger Things" 命中同一条缓存。
  */
-export function cacheKey(query: MediaQuery): string {
+export function cacheKey(query: MediaQuery, prefix: string = KEY_PREFIX): string {
   const split = splitSeason(query.title);
   const season = query.season ?? split.season ?? '';
-  return `${KEY_PREFIX}${normalizeTitle(split.base)}|${season}|${query.year ?? ''}|${query.type}`;
+  return `${prefix}${normalizeTitle(split.base)}|${season}|${query.year ?? ''}|${query.type}`;
 }
+
+/** 各来源的缓存前缀。 */
+export const CACHE_PREFIXES: Record<RatingSource, string> = {
+  douban: KEY_PREFIX,
+  imdb: IMDB_KEY_PREFIX,
+};
 
 function isExpired(entry: CacheEntry, now: number): boolean {
   const ttl = entry.rating === null ? NOT_FOUND_TTL_MS : FOUND_TTL_MS;
@@ -76,7 +88,14 @@ export class RatingCache {
     private readonly now: () => number = () => Date.now(),
     /** 写入合并窗口。快速滚动时几十次写会被合并成一次 storage 调用。 */
     private readonly flushDelayMs = 800,
+    /** 缓存键前缀，决定这个实例管的是哪个来源的缓存。 */
+    private readonly keyPrefix: string = KEY_PREFIX,
   ) {}
+
+  /** 按本实例的前缀生成缓存键。 */
+  keyFor(query: MediaQuery): string {
+    return cacheKey(query, this.keyPrefix);
+  }
 
   async get(key: string): Promise<CacheEntry | undefined> {
     const cached = this.memory.get(key) ?? this.pendingWrites.get(key);
@@ -100,7 +119,7 @@ export class RatingCache {
     return stored;
   }
 
-  set(key: string, rating: DoubanRating | null): void {
+  set(key: string, rating: Rating | null): void {
     const entry: CacheEntry = { at: this.now(), rating };
     this.memory.set(key, entry);
     this.pendingWrites.set(key, entry);
@@ -127,14 +146,14 @@ export class RatingCache {
   /** 当前落盘的条目数，供设置页展示。 */
   async size(): Promise<number> {
     const all = await this.storage.get(null);
-    return Object.keys(all).filter((key) => key.startsWith(KEY_PREFIX)).length;
+    return Object.keys(all).filter((key) => key.startsWith(this.keyPrefix)).length;
   }
 
   async clear(): Promise<number> {
     this.memory.clear();
     this.pendingWrites.clear();
     const all = await this.storage.get(null);
-    const keys = Object.keys(all).filter((key) => key.startsWith(KEY_PREFIX));
+    const keys = Object.keys(all).filter((key) => key.startsWith(this.keyPrefix));
     if (keys.length > 0) await this.storage.remove(keys);
     return keys.length;
   }
@@ -150,7 +169,7 @@ export class RatingCache {
     const now = this.now();
 
     for (const [key, value] of Object.entries(all)) {
-      if (!key.startsWith(KEY_PREFIX)) continue;
+      if (!key.startsWith(this.keyPrefix)) continue;
       if (!isCacheEntry(value)) {
         expired.push(key);
         continue;

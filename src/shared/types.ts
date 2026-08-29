@@ -12,13 +12,23 @@ export interface MediaQuery {
   season?: number;
 }
 
-/** 一条命中的豆瓣条目。 */
-export interface DoubanRating {
-  /** 豆瓣条目 id，例如 "35131346"。 */
+/** 评分来源。加新站点时在这里扩展。 */
+export type RatingSource = 'douban' | 'imdb';
+
+/** 一条命中的评分条目。 */
+export interface Rating {
+  source: RatingSource;
+  /** 来源站内的条目 id：豆瓣是数字串，IMDb 是 "tt0903747" 这样的串。 */
   id: string;
-  /** 豆瓣上的条目标题。 */
+  /** 来源站上的条目标题。 */
   title: string;
-  /** 评分，0–10；豆瓣在评价人数过少时不出分，此时为 null。 */
+  /**
+   * 评分，统一归一到 0–10。
+   *
+   * 豆瓣和 IMDb 恰好都用 10 分制，所以这里不需要换算；真要接入 5 分制的
+   * 站点时，换算必须在各自的 provider 里做完，这一层只认 0–10。
+   * 评价人数过少而站点不出分时为 null。
+   */
   score: number | null;
   /** 评价人数，未知为 null。 */
   votes: number | null;
@@ -32,10 +42,18 @@ export interface DoubanRating {
 
 /** 一次查询的结果。 */
 export type LookupOutcome =
-  | { status: 'ok'; rating: DoubanRating }
-  /** 豆瓣有响应，但没有可信的匹配项。 */
+  | { status: 'ok'; rating: Rating }
+  /** 来源站有响应，但没有可信的匹配项。 */
   | { status: 'not_found' }
-  /** 用户关掉了开关，或当前站点被禁用。 */
+  /** 用户关掉了开关，或这个来源被禁用。 */
   | { status: 'disabled' }
   /** 网络错误、被限流、解析失败等。retryAfterMs 表示建议多久之后再来。 */
   | { status: 'error'; reason: string; retryAfterMs?: number };
+
+/**
+ * 一次查询里各来源的结果。
+ *
+ * 各来源相互独立：豆瓣被限流不影响 IMDb 出分，反之亦然。任一来源关闭时
+ * 是 disabled，内容脚本据此不渲染那一段。
+ */
+export type RatingsOutcome = Record<RatingSource, LookupOutcome>;

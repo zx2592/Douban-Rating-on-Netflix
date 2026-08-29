@@ -2,11 +2,11 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <title>豆瓣检索接口诊断</title>
+    <title>评分接口诊断</title>
     <link rel="stylesheet" href="probe.css" />
   </head>
   <body>
-    <h1>豆瓣检索接口诊断</h1>
+    <h1>评分接口诊断</h1>
     <p class="lead">
       打开即自动运行，约 20 秒。跑完点「复制结果」，把内容发回给开发者。
       不需要打开 DevTools。
@@ -19,6 +19,18 @@
       <span class="copied" id="copied" hidden>已复制</span>
     </div>
     <textarea id="out" readonly rows="14" placeholder="结果会显示在这里"></textarea>
+
+    <h2>IMDb 取数路径</h2>
+    <p class="lead">
+      IMDb 这套接口是在无法访问 imdb.com 的开发环境里写的，<strong>尚未经过真实响应验证</strong>。
+      点下面的按钮跑一遍，把结果发回来，就能确定哪条路径真的可用。约 5 秒。
+    </p>
+    <div class="actions">
+      <button id="imdbRun" type="button">运行 IMDb 诊断</button>
+      <button id="imdbCopy" type="button" disabled>复制结果</button>
+    </div>
+    <p class="status" id="imdbStatus">未运行</p>
+    <textarea id="imdbOut" readonly rows="16" placeholder="IMDb 诊断结果会显示在这里"></textarea>
 
     <h2>单片排查</h2>
     <p class="lead">

@@ -1,8 +1,8 @@
-import { removeBadge, upsertBadge, type BadgeState } from '../badge';
+import { BADGE_CLASS, removeBadge, upsertBadge, type BadgePart, type BadgeState } from '../badge';
 import { BUILD_ID } from '../../shared/build-info';
 import { sendRequest } from '../../shared/messages';
 import { DEFAULT_SETTINGS, loadSettings, onSettingsChanged, type Settings } from '../../shared/settings';
-import type { LookupOutcome, MediaQuery } from '../../shared/types';
+import type { LookupOutcome, MediaQuery, RatingSource, RatingsOutcome } from '../../shared/types';
 import { extractFromCard, extractFromModal, queryIdentity } from './extract';
 import { joinSelectors, NETFLIX_SELECTORS, queryFirst } from './selectors';
 
@@ -63,7 +63,12 @@ let settings: Settings = DEFAULT_SETTINGS;
 let scanTimer: ReturnType<typeof setTimeout> | null = null;
 let sawAnyCard = false;
 
-/** 把查询结果翻译成角标状态。 */
+/**
+ * 显示顺序。数组顺序就是角标上从左到右的顺序 —— 豆瓣在前，IMDb 跟在后面。
+ */
+const SOURCE_ORDER: RatingSource[] = ['douban', 'imdb'];
+
+/** 把查询结果翻译成角标状态。返回 null 表示这一段不该出现。 */
 function toBadgeState(outcome: LookupOutcome): BadgeState | null {
   switch (outcome.status) {
     case 'ok':
@@ -85,6 +90,24 @@ function toBadgeState(outcome: LookupOutcome): BadgeState | null {
       debug('查询失败', outcome.reason);
       return null;
   }
+}
+
+/**
+ * 把各来源的结果拼成角标要显示的若干段。
+ *
+ * 每个来源独立成段：豆瓣被限流时 IMDb 那段照常显示，反之亦然 —— 这正是
+ * 两边分开走队列、分开缓存的意义所在，聚合成"全有或全无"会把它浪费掉。
+ */
+function toBadgeParts(outcome: RatingsOutcome, showUnrated: boolean): BadgePart[] {
+  const parts: BadgePart[] = [];
+  for (const source of SOURCE_ORDER) {
+    const state = toBadgeState(outcome[source]);
+    if (!state) continue;
+    // 列表页默认不为"未收录"占位，免得一排封面上挂满没有数字的空角标。
+    if (state.kind === 'missing' && !showUnrated) continue;
+    parts.push({ source, state });
+  }
+  return parts;
 }
 
 /** 当前停留在视野里的卡片。滚走的会被移除，用于驻留判定。 */
@@ -157,14 +180,14 @@ async function processCard(card: HTMLElement): Promise<void> {
     return;
   }
 
-  const state = toBadgeState(outcome);
-  if (!state || (state.kind === 'missing' && !settings.showUnrated)) {
+  const parts = toBadgeParts(outcome, settings.showUnrated);
+  if (parts.length === 0) {
     removeBadge(card);
     return;
   }
   // 传整张卡片作为去重范围：anchor 的解析结果会随 Netflix 重渲染漂移，
   // 不跨挂载点清理就会出现两个角标叠在封面同一个角上。
-  upsertBadge(anchor, { variant: 'card', position: settings.badgePosition, identity, state }, card);
+  upsertBadge(anchor, { variant: 'card', position: settings.badgePosition, identity, parts }, card);
 }
 
 async function processModal(modal: HTMLElement): Promise<void> {
@@ -180,18 +203,24 @@ async function processModal(modal: HTMLElement): Promise<void> {
   if (anchor.getAttribute(IDENTITY_ATTR) === identity) return;
   anchor.setAttribute(IDENTITY_ATTR, identity);
 
-  upsertBadge(anchor, { variant: 'modal', position: settings.badgePosition, identity, state: { kind: 'loading' } });
+  // 详情层是用户主动打开等结果的，这里显示"查询中"占位；开着的来源各占一段。
+  const loading: BadgePart[] = SOURCE_ORDER.filter((source) => settings.sources[source]).map(
+    (source) => ({ source, state: { kind: 'loading' } }),
+  );
+  upsertBadge(anchor, { variant: 'modal', position: settings.badgePosition, identity, parts: loading });
 
   const outcome = await sendRequest({ kind: 'lookup', query });
   if (!anchor.isConnected || anchor.getAttribute(IDENTITY_ATTR) !== identity) return;
 
-  const state = toBadgeState(outcome);
-  if (!state) {
+  // 详情层里保留"未收录"占位：用户是主动点开来看信息的，
+  // 明确告诉他"这家没有"比让那一段凭空消失更有用。
+  const parts = toBadgeParts(outcome, true);
+  if (parts.length === 0) {
     removeBadge(anchor);
     anchor.removeAttribute(IDENTITY_ATTR);
     return;
   }
-  upsertBadge(anchor, { variant: 'modal', position: settings.badgePosition, identity, state });
+  upsertBadge(anchor, { variant: 'modal', position: settings.badgePosition, identity, parts });
 }
 
 /**
@@ -210,6 +239,13 @@ function handleCardClick(event: Event): void {
   if (!settings.enabled) return;
   const target = event.target;
   if (!(target instanceof Element)) return;
+
+  // 点角标是"我要去看条目页"，不是"我对这部片感兴趣"。
+  //
+  // 不能指望角标自己的 stopPropagation 拦住这里：本监听器挂在
+  // document.body 的捕获阶段，而 body 是角标的祖先 —— 捕获是自外向内传的，
+  // 我们比角标先拿到事件，它再怎么拦也来不及。所以只能在这里认目标。
+  if (target.closest(`.${BADGE_CLASS}`)) return;
 
   const card = target.closest<HTMLElement>(joinSelectors(NETFLIX_SELECTORS.card));
   if (!card) return;

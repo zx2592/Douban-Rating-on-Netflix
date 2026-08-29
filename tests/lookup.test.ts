@@ -3,6 +3,7 @@ import { RatingCache, type StorageArea } from '../src/background/cache';
 import type { DoubanClient } from '../src/background/douban/client';
 import type { RatingDetail } from '../src/background/douban/parse';
 import { InterestStore } from '../src/background/interest';
+import { DoubanProvider } from '../src/background/douban/provider';
 import { RatingLookup } from '../src/background/lookup';
 import type { Candidate } from '../src/background/matcher';
 import { RateLimitedError } from '../src/background/queue';
@@ -71,7 +72,7 @@ const matchingCandidate: Candidate = {
 function makeLookup(options: FakeClientOptions = {}) {
   const client = fakeClient(options);
   const cache = new RatingCache(memoryStorage());
-  return { lookup: new RatingLookup(cache, client), client, cache };
+  return { lookup: new RatingLookup(new DoubanProvider(client), cache), client, cache };
 }
 
 const query: MediaQuery = { title: '河边的错误', year: 2023, type: 'movie' };
@@ -156,7 +157,7 @@ describe('RatingLookup 正常路径', () => {
           url: 'https://movie.douban.com/subject/1/',
         },
       ]);
-    const lookup = new RatingLookup(new RatingCache(memoryStorage()), client);
+    const lookup = new RatingLookup(new DoubanProvider(client), new RatingCache(memoryStorage()));
 
     const outcome = await lookup.lookup({ title: '魷魚遊戲', year: 2021, type: 'tv' });
     expect(outcome.status).toBe('ok');
@@ -258,7 +259,7 @@ describe('两级检索', () => {
       candidates: [],
       fullSearchError: new RateLimitedError(300_000),
     });
-    const lookup = new RatingLookup(new RatingCache(memoryStorage()), client);
+    const lookup = new RatingLookup(new DoubanProvider(client), new RatingCache(memoryStorage()));
 
     const first = await lookup.lookup(query);
     expect(first).toMatchObject({ status: 'error', retryAfterMs: 300_000 });
@@ -331,7 +332,7 @@ describe('RatingLookup 错误处理', () => {
   it('错误结果绝不写入缓存，下次还会重试', async () => {
     // 把网络故障当成"查不到"缓存起来，会让用户在恢复后仍看不到评分。
     const client = fakeClient({ searchError: new Error('网络中断') });
-    const lookup = new RatingLookup(new RatingCache(memoryStorage()), client);
+    const lookup = new RatingLookup(new DoubanProvider(client), new RatingCache(memoryStorage()));
 
     expect((await lookup.lookup(query)).status).toBe('error');
     expect((await lookup.lookup(query)).status).toBe('error');
@@ -349,7 +350,7 @@ describe('RatingLookup 错误处理', () => {
 
   it('并发查询失败后，去重表要清干净，不能卡住后续查询', async () => {
     const client = fakeClient({ searchError: new Error('网络中断') });
-    const lookup = new RatingLookup(new RatingCache(memoryStorage()), client);
+    const lookup = new RatingLookup(new DoubanProvider(client), new RatingCache(memoryStorage()));
 
     await Promise.all([lookup.lookup(query), lookup.lookup(query)]);
     // 失败的 promise 若留在 inFlight 里，这一次会拿到上一次的失败结果。
@@ -369,7 +370,7 @@ describe('RatingLookup 与「感兴趣」记录', () => {
     const cache = new RatingCache(storage, now);
     const interest = new InterestStore(storage, now);
     return {
-      lookup: new RatingLookup(cache, client, interest),
+      lookup: new RatingLookup(new DoubanProvider(client), cache, interest),
       client,
       cache,
       interest,

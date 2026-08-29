@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExtensionRequest, ExtensionResponse } from '../src/shared/messages';
-import type { LookupOutcome, MediaQuery } from '../src/shared/types';
+import type { LookupOutcome, MediaQuery, RatingsOutcome } from '../src/shared/types';
 
 /**
  * 内容脚本的集成测试。
@@ -18,6 +18,8 @@ let intersectionCallback: IntersectionCallback | null = null;
 let observedElements: Element[] = [];
 let lookupRequests: MediaQuery[] = [];
 let lookupResponder: (query: MediaQuery) => LookupOutcome;
+/** IMDb 那一路的结果。默认关闭，只有明确测 IMDb 的用例才打开。 */
+let imdbResponder: (query: MediaQuery) => LookupOutcome;
 let interestRequests: MediaQuery[] = [];
 /** background 是否把这次点击记成了新的兴趣（冷却期内会返回 false）。 */
 let interestResponder: (query: MediaQuery) => boolean;
@@ -111,7 +113,13 @@ function installChromeMock(): void {
       sendMessage: vi.fn(async (request: ExtensionRequest): Promise<ExtensionResponse> => {
         if (request.kind === 'lookup') {
           lookupRequests.push(request.query);
-          return { kind: 'lookup', outcome: lookupResponder(request.query) };
+          return {
+            kind: 'lookup',
+            outcome: {
+              douban: lookupResponder(request.query),
+              imdb: imdbResponder(request.query),
+            } satisfies RatingsOutcome,
+          };
         }
         if (request.kind === 'interest') {
           interestRequests.push(request.query);
@@ -134,9 +142,11 @@ beforeEach(() => {
   lookupRequests = [];
   interestRequests = [];
   interestResponder = () => true;
+  imdbResponder = () => ({ status: 'disabled' });
   lookupResponder = () => ({
     status: 'ok',
     rating: {
+      source: 'douban' as const,
       id: '35131346',
       title: '河边的错误',
       score: 7.4,
@@ -391,7 +401,8 @@ describe('点击卡片 = 表达兴趣', () => {
     lookupResponder = () => ({
       status: 'ok',
       rating: {
-        id: '35131346',
+        source: 'douban' as const,
+      id: '35131346',
         title: '河边的错误',
         score: 7.4,
         votes: 254321,
@@ -437,6 +448,117 @@ describe('点击卡片 = 表达兴趣', () => {
     await loadContentScript();
 
     document.getElementById('nav')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await settle(100);
+
+    expect(interestRequests).toHaveLength(0);
+  });
+});
+
+describe('豆瓣 + IMDb 并排出现在卡片上', () => {
+  const IMDB_OK: LookupOutcome = {
+    status: 'ok',
+    rating: {
+      source: 'imdb',
+      id: 'tt0903747',
+      title: 'Breaking Bad',
+      score: 9.5,
+      votes: 2_200_000,
+      year: 2008,
+      type: 'tv',
+      url: 'https://www.imdb.com/title/tt0903747/',
+      confidence: 100,
+    },
+  };
+
+  it('一个角标里两段，IMDb 排在豆瓣后面', async () => {
+    imdbResponder = () => IMDB_OK;
+    document.body.innerHTML = CARD_HTML;
+    await loadContentScript();
+    scrollIntoView();
+    await pastDwell();
+
+    // 只有一个角标：两段共用一个绝对定位的容器，不会叠在封面同一个角。
+    expect(document.querySelectorAll('.dbr-badge')).toHaveLength(1);
+    const parts = [...document.querySelectorAll('.dbr-part')];
+    expect(parts.map((part) => part.className.includes('dbr-src-imdb'))).toEqual([false, true]);
+    expect(parts[0]?.querySelector('.dbr-value')?.textContent).toBe('7.4');
+    expect(parts[1]?.querySelector('.dbr-value')?.textContent).toBe('9.5');
+  });
+
+  it('豆瓣被限流时 IMDb 照常显示', async () => {
+    // 两边分开走队列、分开缓存的意义就在这里。聚合成"全有或全无"
+    // 会让豆瓣的限流把 IMDb 一起拖下水。
+    lookupResponder = () => ({ status: 'error', reason: '豆瓣暂时限流' });
+    imdbResponder = () => IMDB_OK;
+    document.body.innerHTML = CARD_HTML;
+    await loadContentScript();
+    scrollIntoView();
+    await pastDwell();
+
+    const parts = [...document.querySelectorAll('.dbr-part')];
+    expect(parts).toHaveLength(1);
+    expect(parts[0]?.className).toContain('dbr-src-imdb');
+    expect(parts[0]?.querySelector('.dbr-value')?.textContent).toBe('9.5');
+  });
+
+  it('IMDb 那一路出错时，豆瓣的分照常显示', async () => {
+    imdbResponder = () => ({ status: 'error', reason: 'IMDb 请求超时' });
+    document.body.innerHTML = CARD_HTML;
+    await loadContentScript();
+    scrollIntoView();
+    await pastDwell();
+
+    const parts = [...document.querySelectorAll('.dbr-part')];
+    expect(parts).toHaveLength(1);
+    expect(parts[0]?.className).toContain('dbr-src-douban');
+  });
+
+  it('两边都没有结果时不留下空角标', async () => {
+    lookupResponder = () => ({ status: 'not_found' });
+    imdbResponder = () => ({ status: 'not_found' });
+    document.body.innerHTML = CARD_HTML;
+    await loadContentScript();
+    scrollIntoView();
+    await pastDwell();
+
+    expect(document.querySelector('.dbr-badge')).toBeNull();
+  });
+
+  it('两段各自跳自己的条目页', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    imdbResponder = () => IMDB_OK;
+    document.body.innerHTML = CARD_HTML;
+    await loadContentScript();
+    scrollIntoView();
+    await pastDwell();
+
+    document.querySelector<HTMLElement>('.dbr-src-imdb')!.click();
+    expect(open).toHaveBeenLastCalledWith(
+      'https://www.imdb.com/title/tt0903747/',
+      '_blank',
+      'noopener,noreferrer',
+    );
+
+    document.querySelector<HTMLElement>('.dbr-src-douban')!.click();
+    expect(open).toHaveBeenLastCalledWith(
+      'https://movie.douban.com/subject/35131346/',
+      '_blank',
+      'noopener,noreferrer',
+    );
+  });
+
+  it('点角标不会被记成"对这部片感兴趣"', async () => {
+    // 点击卡片会记兴趣；点角标是"我要去看条目页"，不该顺带触发那个，
+    // 否则每次点分数都会白白刷新一次兴趣时间戳。
+    vi.spyOn(window, 'open').mockImplementation(() => null);
+    imdbResponder = () => IMDB_OK;
+    document.body.innerHTML = CARD_HTML;
+    await loadContentScript();
+    scrollIntoView();
+    await pastDwell();
+
+    interestRequests = [];
+    document.querySelector<HTMLElement>('.dbr-src-imdb')!.click();
     await settle(100);
 
     expect(interestRequests).toHaveLength(0);

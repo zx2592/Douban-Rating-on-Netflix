@@ -28,6 +28,13 @@
   z-index: 5 !important;
 }
 
+/* 一个来源占一段：logo + 分数，段与段之间留出间距 */
+.dbr-badge .dbr-part {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 3px !important;
+}
+
 .dbr-badge .dbr-logo {
   display: inline-block !important;
   padding: 0 3px !important;
@@ -43,45 +50,66 @@
 }
 
 /*
+ * IMDb 段整体换成 IMDb 自己的金黄色，和豆瓣的绿色一眼区分开。
+ *
+ * 分数本身也用金黄而不是沿用豆瓣那套「按分档变色」：一张封面上并排两个
+ * 数字，先要能一眼看出哪个是哪家的，再谈分数高低。分档信息没有丢 ——
+ * 鼠标悬停的 title 里带着完整分数和评分人数。
+ */
+.dbr-badge .dbr-src-imdb .dbr-logo {
+  background: #f5c518 !important;
+  color: #000 !important;
+  font-size: 9px !important;
+  letter-spacing: 0.2px !important;
+}
+.dbr-badge .dbr-src-imdb .dbr-value { color: #f5c518 !important; }
+
+/*
  * 翻译扩展的兜底防线。
  *
  * 页面翻译类扩展会把译文包在自己的元素里插进原文所在的节点。实测沉浸式翻译
  * 把「豆」译成「豆子」并插进 .dbr-logo，渲染成「豆 豆子 8.4」。已经用
  * translate="no" + notranslate 声明过不要翻译，这里再兜一层：角标内部只允许
- * 出现自己的两个 span，任何外来元素一律隐藏 —— 不依赖对方用什么标签名，
+ * 出现自己那几个 span，任何外来元素一律隐藏 —— 不依赖对方用什么标签名，
  * 也不影响页面其余部分的翻译。
+ *
+ * 注意层级：角标的直接子元素现在是 .dbr-part，logo 和分数降到了第二层。
+ * 加来源时若忘了同步这条规则，新那一段会被整段隐藏，而且没有任何报错。
  */
-.dbr-badge > *:not(.dbr-logo):not(.dbr-value),
+.dbr-badge > *:not(.dbr-part),
+.dbr-badge .dbr-part > *:not(.dbr-logo):not(.dbr-value),
 .dbr-badge .dbr-logo > *,
 .dbr-badge .dbr-value > * {
   display: none !important;
 }
 
-/* 分数分档配色 */
+/* 分数分档配色（豆瓣段用；IMDb 段在上面统一成金黄色） */
 .dbr-tier-high .dbr-value { color: #7ddc8b !important; }
 .dbr-tier-mid  .dbr-value { color: #ffd479 !important; }
 .dbr-tier-low  .dbr-value { color: #ff9d9d !important; }
 .dbr-state-unrated .dbr-value { color: #b6b6b6 !important; }
 
-/* 可点击态 */
-.dbr-badge[role='link'] { cursor: pointer !important; }
-.dbr-badge[role='link']:hover { background: rgba(0, 0, 0, 0.92) !important; }
-.dbr-badge[role='link']:focus-visible {
+/* 可点击态。作用在「段」上：两个来源各自跳各自的条目页 */
+.dbr-part[role='link'] { cursor: pointer !important; }
+.dbr-part[role='link']:hover .dbr-value { text-decoration: underline !important; }
+.dbr-part[role='link']:focus-visible {
   outline: 2px solid #2e963d !important;
   outline-offset: 1px !important;
 }
+.dbr-src-imdb[role='link']:focus-visible { outline-color: #f5c518 !important; }
 
-/* 查询中：整体压暗，并让"豆"字轻微呼吸，避免用户以为卡住了 */
-.dbr-state-loading { opacity: 0.55 !important; }
-.dbr-state-loading .dbr-logo { animation: dbr-pulse 1.2s ease-in-out infinite; }
+/* 查询中：该段压暗，并让 logo 轻微呼吸，避免用户以为卡住了 */
+.dbr-part.dbr-state-loading { opacity: 0.55 !important; }
+.dbr-part.dbr-state-loading .dbr-logo { animation: dbr-pulse 1.2s ease-in-out infinite; }
 
 @keyframes dbr-pulse {
   0%, 100% { opacity: 0.45; }
   50% { opacity: 1; }
 }
 
-/* 未收录时不占位，直接隐藏，避免列表页出现一排无意义的角标 */
-.dbr-state-missing { display: none !important; }
+/* 未收录时该段不占位，直接隐藏，避免列表页出现一排无意义的角标。
+   两段都未收录时内容脚本压根不会注入角标，不会剩下空壳。 */
+.dbr-part.dbr-state-missing { display: none !important; }
 
 /* ---- 列表卡片：绝对定位压在封面上 ---- */
 .dbr-card {
@@ -101,10 +129,28 @@
   padding: 3px 7px !important;
 }
 .dbr-modal .dbr-logo { font-size: 11px !important; line-height: 16px !important; }
+.dbr-modal .dbr-src-imdb .dbr-logo { font-size: 10px !important; }
 /* 详情层里即使没有评分也保留占位，用户是主动点开来看信息的 */
-.dbr-modal.dbr-state-missing { display: inline-flex !important; opacity: 0.5 !important; }
-.dbr-modal.dbr-state-missing .dbr-value::after { content: '未收录'; font-weight: 400; }
+.dbr-modal .dbr-part.dbr-state-missing { display: inline-flex !important; opacity: 0.5 !important; }
+.dbr-modal .dbr-part.dbr-state-missing .dbr-value::after { content: '未收录'; font-weight: 400; }
+
+/* 两段之间的分隔：留白之外再加一条竖线，密排时也分得清 */
+.dbr-badge .dbr-part + .dbr-part {
+  margin-left: 6px !important;
+  padding-left: 6px !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.25) !important;
+}
+/*
+ * 前一段被隐藏时，后一段不该还留着分隔线（否则角标会以一条竖线开头）。
+ * 只限卡片角标：详情弹层里"未收录"那一段是显示出来的，分隔线要留着，
+ * 不然 IMDb 的黄色块会直接贴着"未收录"三个字。
+ */
+.dbr-card .dbr-part.dbr-state-missing + .dbr-part {
+  margin-left: 0 !important;
+  padding-left: 0 !important;
+  border-left: 0 !important;
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .dbr-state-loading .dbr-logo { animation: none; }
+  .dbr-part.dbr-state-loading .dbr-logo { animation: none; }
 }

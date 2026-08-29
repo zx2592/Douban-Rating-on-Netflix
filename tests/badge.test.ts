@@ -12,6 +12,11 @@ function badgeIn(anchor: HTMLElement): HTMLElement | null {
   return anchor.querySelector<HTMLElement>(`.${BADGE_CLASS}`);
 }
 
+/** 角标里的某一段。状态、配色、点击都挂在段上，不在整块角标上。 */
+function partIn(anchor: HTMLElement, source = 'douban'): HTMLElement | null {
+  return anchor.querySelector<HTMLElement>(`.dbr-src-${source}`);
+}
+
 const RATED = {
   kind: 'rated' as const,
   score: 8.7,
@@ -28,7 +33,7 @@ beforeEach(() => {
 describe('upsertBadge', () => {
   it('注入角标并显示分数', () => {
     const anchor = anchorFixture();
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
 
     const badge = badgeIn(anchor)!;
     expect(badge.querySelector('.dbr-value')?.textContent).toBe('8.7');
@@ -37,8 +42,8 @@ describe('upsertBadge', () => {
 
   it('重复调用只更新不重复插入', () => {
     const anchor = anchorFixture();
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: { kind: 'loading' } });
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: { kind: 'loading' } }] });
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
 
     expect(anchor.querySelectorAll(`.${BADGE_CLASS}`)).toHaveLength(1);
     expect(badgeIn(anchor)?.querySelector('.dbr-value')?.textContent).toBe('8.7');
@@ -46,34 +51,32 @@ describe('upsertBadge', () => {
 
   it('从 loading 切到 rated 时旧的状态 class 会被清掉', () => {
     const anchor = anchorFixture();
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: { kind: 'loading' } });
-    expect(badgeIn(anchor)?.classList.contains('dbr-state-loading')).toBe(true);
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: { kind: 'loading' } }] });
+    expect(partIn(anchor)?.classList.contains('dbr-state-loading')).toBe(true);
 
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
-    const badge = badgeIn(anchor)!;
-    expect(badge.classList.contains('dbr-state-loading')).toBe(false);
-    expect(badge.classList.contains('dbr-state-rated')).toBe(true);
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
+    expect(partIn(anchor)!.classList.contains('dbr-state-loading')).toBe(false);
+    expect(partIn(anchor)!.classList.contains('dbr-state-rated')).toBe(true);
   });
 
   it('按分数打上不同的档位 class', () => {
     const anchor = anchorFixture();
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
-    expect(badgeIn(anchor)?.classList.contains('dbr-tier-high')).toBe(true);
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
+    expect(partIn(anchor)?.classList.contains('dbr-tier-high')).toBe(true);
 
     upsertBadge(anchor, {
       variant: 'card',
       position: 'top-left',
       identity: 'a',
-      state: { ...RATED, score: 5.2 },
+      parts: [{ source: 'douban', state: { ...RATED, score: 5.2 } }],
     });
-    const badge = badgeIn(anchor)!;
-    expect(badge.classList.contains('dbr-tier-low')).toBe(true);
-    expect(badge.classList.contains('dbr-tier-high')).toBe(false);
+    expect(partIn(anchor)!.classList.contains('dbr-tier-low')).toBe(true);
+    expect(partIn(anchor)!.classList.contains('dbr-tier-high')).toBe(false);
   });
 
   it('位置和形态反映在 class 上', () => {
     const anchor = anchorFixture();
-    upsertBadge(anchor, { variant: 'modal', position: 'bottom-right', identity: 'a', state: RATED });
+    upsertBadge(anchor, { variant: 'modal', position: 'bottom-right', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
     const badge = badgeIn(anchor)!;
     expect(badge.classList.contains('dbr-modal')).toBe(true);
     expect(badge.classList.contains('dbr-pos-bottom-right')).toBe(true);
@@ -85,21 +88,21 @@ describe('upsertBadge', () => {
       variant: 'card',
       position: 'top-left',
       identity: 'a',
-      state: { kind: 'unrated', url: RATED.url, title: RATED.title },
+      parts: [{ source: 'douban', state: { kind: 'unrated', url: RATED.url, title: RATED.title } }],
     });
     expect(badgeIn(anchor)?.querySelector('.dbr-value')?.textContent).toBe('—');
   });
 
   it('给卡片容器补上定位参考系，否则绝对定位会跑到页面角落', () => {
     const anchor = anchorFixture();
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
     expect(anchor.style.position).toBe('relative');
   });
 
   it('tooltip 里给出评分、片名和评价人数', () => {
     const anchor = anchorFixture();
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
-    const title = badgeIn(anchor)!.title;
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
+    const title = partIn(anchor)!.title;
     expect(title).toContain('8.7');
     expect(title).toContain('河边的错误');
     expect(title).toContain('25.4 万人评价');
@@ -110,9 +113,9 @@ describe('角标的点击行为', () => {
   it('点击在新标签页打开豆瓣条目', () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     const anchor = anchorFixture();
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
 
-    badgeIn(anchor)!.click();
+    partIn(anchor)!.click();
     expect(open).toHaveBeenCalledWith(RATED.url, '_blank', 'noopener,noreferrer');
   });
 
@@ -123,30 +126,30 @@ describe('角标的点击行为', () => {
     const parentClick = vi.fn();
     anchor.addEventListener('click', parentClick);
 
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
-    badgeIn(anchor)!.click();
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
+    partIn(anchor)!.click();
 
     expect(parentClick).not.toHaveBeenCalled();
   });
 
   it('未收录时不可点击', () => {
     const anchor = anchorFixture();
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: { kind: 'missing' } });
-    expect(badgeIn(anchor)?.hasAttribute('role')).toBe(false);
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: { kind: 'missing' } }] });
+    expect(partIn(anchor)?.hasAttribute('role')).toBe(false);
   });
 
   it('状态更新后点击跳到新的条目，而不是旧的', () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     const anchor = anchorFixture();
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
     upsertBadge(anchor, {
       variant: 'card',
       position: 'top-left',
       identity: 'b',
-      state: { ...RATED, url: 'https://movie.douban.com/subject/999/' },
+      parts: [{ source: 'douban', state: { ...RATED, url: 'https://movie.douban.com/subject/999/' } }],
     });
 
-    badgeIn(anchor)!.click();
+    partIn(anchor)!.click();
     expect(open).toHaveBeenCalledTimes(1);
     expect(open).toHaveBeenCalledWith('https://movie.douban.com/subject/999/', '_blank', 'noopener,noreferrer');
   });
@@ -154,20 +157,20 @@ describe('角标的点击行为', () => {
   it('可以用键盘打开，且支持 Tab 聚焦', () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     const anchor = anchorFixture();
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
 
-    const badge = badgeIn(anchor)!;
-    expect(badge.getAttribute('tabindex')).toBe('0');
-    badge.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    const part = partIn(anchor)!;
+    expect(part.getAttribute('tabindex')).toBe('0');
+    part.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     expect(open).toHaveBeenCalled();
   });
 
   it('按其它键不会误触发跳转', () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     const anchor = anchorFixture();
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
 
-    badgeIn(anchor)!.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+    partIn(anchor)!.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
     expect(open).not.toHaveBeenCalled();
   });
 });
@@ -176,7 +179,7 @@ describe('removeBadge', () => {
   it('移除角标且不动其它子节点', () => {
     const anchor = anchorFixture();
     anchor.innerHTML = '<img class="boxart-image" />';
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
 
     removeBadge(anchor);
     expect(badgeIn(anchor)).toBeNull();
@@ -208,8 +211,8 @@ describe('跨挂载点去重', () => {
     // 旧角标留在原处、新角标挂到新元素上，两个都是 absolute 定位在同一个角，
     // 看起来就是两个「豆」并排 —— 用户反馈的「豆 豆子」正是这个。
     const { card, first, second } = cardFixture();
-    upsertBadge(first, { variant: 'card', position: 'top-left', identity: 'a', state: RATED }, card);
-    upsertBadge(second, { variant: 'card', position: 'top-left', identity: 'a', state: RATED }, card);
+    upsertBadge(first, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] }, card);
+    upsertBadge(second, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] }, card);
 
     expect(card.querySelectorAll(`.${BADGE_CLASS}`)).toHaveLength(1);
     expect(second.querySelector(`.${BADGE_CLASS}`)).not.toBeNull();
@@ -217,8 +220,8 @@ describe('跨挂载点去重', () => {
 
   it('角标内部始终是一个「豆」字加一个评分', () => {
     const { card, first } = cardFixture();
-    upsertBadge(first, { variant: 'card', position: 'top-left', identity: 'a', state: RATED }, card);
-    upsertBadge(first, { variant: 'card', position: 'top-left', identity: 'a', state: RATED }, card);
+    upsertBadge(first, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] }, card);
+    upsertBadge(first, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] }, card);
 
     const badge = card.querySelector<HTMLElement>(`.${BADGE_CLASS}`)!;
     expect(badge.querySelectorAll('.dbr-logo')).toHaveLength(1);
@@ -228,7 +231,7 @@ describe('跨挂载点去重', () => {
 
   it('结构被外力搞坏后，下一次更新能自愈', () => {
     const { card, first } = cardFixture();
-    upsertBadge(first, { variant: 'card', position: 'top-left', identity: 'a', state: RATED }, card);
+    upsertBadge(first, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] }, card);
 
     // 模拟多出一个 logo 的坏结构。
     const badge = card.querySelector<HTMLElement>(`.${BADGE_CLASS}`)!;
@@ -238,14 +241,14 @@ describe('跨挂载点去重', () => {
     badge.append(extra);
     expect(badge.querySelectorAll('.dbr-logo')).toHaveLength(2);
 
-    upsertBadge(first, { variant: 'card', position: 'top-left', identity: 'a', state: RATED }, card);
+    upsertBadge(first, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] }, card);
     expect(badge.querySelectorAll('.dbr-logo')).toHaveLength(1);
   });
 
   it('removeBadge 清掉整张卡片上的所有角标', () => {
     const { card, first, second } = cardFixture();
-    upsertBadge(first, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
-    upsertBadge(second, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
+    upsertBadge(first, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
+    upsertBadge(second, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
     expect(card.querySelectorAll(`.${BADGE_CLASS}`)).toHaveLength(2);
 
     removeBadge(card);
@@ -259,7 +262,7 @@ describe('抵御页面翻译扩展', () => {
     // .dbr-logo 内部，渲染成「豆 豆子 8.4」。translate="no" 是标准属性且
     // 会被后代继承，notranslate 是 Google 翻译沿用的约定，两者都要有。
     const anchor = anchorFixture();
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
 
     const badge = badgeIn(anchor)!;
     expect(badge.getAttribute('translate')).toBe('no');
@@ -269,8 +272,8 @@ describe('抵御页面翻译扩展', () => {
   it('状态更新重置 class 之后，notranslate 依然在', () => {
     // className 是整体赋值的，漏掉 notranslate 就等于每次更新都把防护摘掉。
     const anchor = anchorFixture();
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: { kind: 'loading' } });
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: { kind: 'loading' } }] });
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
 
     const badge = badgeIn(anchor)!;
     expect(badge.classList.contains('notranslate')).toBe(true);
@@ -279,7 +282,7 @@ describe('抵御页面翻译扩展', () => {
 
   it('已经被注入译文的角标，下一次更新会清理干净', () => {
     const anchor = anchorFixture();
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [{ source: 'douban', state: RATED }] });
 
     // 照线上 dump 复现沉浸式翻译的注入形态：译文包在 <font> 里塞进 .dbr-logo。
     const logo = badgeIn(anchor)!.querySelector('.dbr-logo')!;
@@ -290,16 +293,121 @@ describe('抵御页面翻译扩展', () => {
     expect(badgeIn(anchor)!.textContent).toContain('豆子');
 
     // buildContent 每次整体重建，注入物随之消失。
-    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: { ...RATED, score: 9.1 } });
+    upsertBadge(anchor, {
+      variant: 'card',
+      position: 'top-left',
+      identity: 'a',
+      parts: [{ source: 'douban', state: { ...RATED, score: 9.1 } }],
+    });
     expect(badgeIn(anchor)!.textContent).toBe('豆9.1');
     expect(badgeIn(anchor)!.querySelector('font')).toBeNull();
   });
 
   it('CSS 兜底规则覆盖角标内的任何外来元素', () => {
-    // 不依赖对方用什么标签名：角标内部只允许自己的两个 span。
+    // 不依赖对方用什么标签名：角标内部只允许自己那几个 span。
+    //
+    // 这条断言盯的是层级：角标的直接子元素现在是 .dbr-part，logo 和分数
+    // 降到了第二层。规则若还停在旧层级，每一段都会被当成"外来元素"整段
+    // 隐藏 —— 页面上什么都不显示，而且没有任何报错。
     const css = readFileSync('src/content/badge.css', 'utf8');
-    expect(css).toContain('.dbr-badge > *:not(.dbr-logo):not(.dbr-value)');
+    expect(css).toContain('.dbr-badge > *:not(.dbr-part)');
+    expect(css).toContain('.dbr-badge .dbr-part > *:not(.dbr-logo):not(.dbr-value)');
     expect(css).toContain('.dbr-badge .dbr-logo > *');
     expect(css).toContain('.dbr-badge .dbr-value > *');
+  });
+
+  it('翻译兜底规则不会把 IMDb 那一段一起隐藏掉', () => {
+    // 加来源时最容易犯的错：只改了渲染，忘了同步这条 CSS。
+    const css = readFileSync('src/content/badge.css', 'utf8');
+    const guard = /\.dbr-badge > \*:not\(([^)]*)\)/.exec(css);
+    expect(guard).not.toBeNull();
+    // 白名单必须是 .dbr-part 本身，而不是某个具体来源的 class。
+    expect(guard![1]).toBe('.dbr-part');
+  });
+});
+
+describe('豆瓣 + IMDb 并排显示', () => {
+  const IMDB_RATED = {
+    kind: 'rated' as const,
+    score: 9.5,
+    votes: 2_200_000,
+    url: 'https://www.imdb.com/title/tt0903747/',
+    title: 'Breaking Bad',
+  };
+
+  function upsertBoth(anchor: HTMLElement): void {
+    upsertBadge(anchor, {
+      variant: 'card',
+      position: 'top-left',
+      identity: 'a',
+      parts: [
+        { source: 'douban', state: RATED },
+        { source: 'imdb', state: IMDB_RATED },
+      ],
+    });
+  }
+
+  it('IMDb 的分数排在豆瓣之后', () => {
+    const anchor = anchorFixture();
+    upsertBoth(anchor);
+
+    const parts = [...badgeIn(anchor)!.querySelectorAll('.dbr-part')];
+    expect(parts).toHaveLength(2);
+    // 顺序由 parts 数组决定，这里锁死"豆瓣在前、IMDb 在后"。
+    expect(parts[0]!.className).toContain('dbr-src-douban');
+    expect(parts[1]!.className).toContain('dbr-src-imdb');
+    expect(badgeIn(anchor)!.textContent).toBe('豆8.7IMDb9.5');
+  });
+
+  it('两段各自跳自己的条目页', () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const anchor = anchorFixture();
+    upsertBoth(anchor);
+
+    partIn(anchor, 'douban')!.click();
+    expect(open).toHaveBeenLastCalledWith(RATED.url, '_blank', 'noopener,noreferrer');
+
+    partIn(anchor, 'imdb')!.click();
+    expect(open).toHaveBeenLastCalledWith(IMDB_RATED.url, '_blank', 'noopener,noreferrer');
+  });
+
+  it('一边未收录时，另一边照常显示', () => {
+    // 两个来源分开走队列、分开缓存，就是为了让豆瓣被限流时 IMDb 还能出分。
+    // 聚合成"全有或全无"会把这个好处白白浪费掉。
+    const anchor = anchorFixture();
+    upsertBadge(anchor, {
+      variant: 'card',
+      position: 'top-left',
+      identity: 'a',
+      parts: [{ source: 'imdb', state: IMDB_RATED }],
+    });
+
+    expect(badgeIn(anchor)!.querySelectorAll('.dbr-part')).toHaveLength(1);
+    expect(partIn(anchor, 'imdb')).not.toBeNull();
+    expect(partIn(anchor, 'douban')).toBeNull();
+  });
+
+  it('一段都没有时不留下空角标', () => {
+    const anchor = anchorFixture();
+    upsertBoth(anchor);
+    expect(badgeIn(anchor)).not.toBeNull();
+
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', parts: [] });
+    expect(badgeIn(anchor)).toBeNull();
+  });
+
+  it('IMDb 的票数按千分位显示，不用「万」', () => {
+    const anchor = anchorFixture();
+    upsertBoth(anchor);
+
+    expect(partIn(anchor, 'imdb')!.title).toContain('2,200,000');
+    expect(partIn(anchor, 'douban')!.title).toContain('25.4 万人评价');
+  });
+
+  it('两段的配色由 CSS 按来源区分', () => {
+    const css = readFileSync('src/content/badge.css', 'utf8');
+    // 豆瓣绿、IMDb 金黄，这是"换一个颜色"这条需求的落点。
+    expect(css).toContain('.dbr-badge .dbr-src-imdb .dbr-value { color: #f5c518');
+    expect(css).toContain('background: #f5c518');
   });
 });

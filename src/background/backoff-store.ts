@@ -14,13 +14,15 @@ import type { StorageArea } from './cache';
 const KEY = 'backoff';
 
 export interface BackoffState {
-  /** 全局请求队列的退避恢复时刻。 */
+  /** 豆瓣请求队列的退避恢复时刻。 */
   queue: number;
-  /** 完整搜索接口自身静默期的恢复时刻。 */
+  /** 豆瓣完整搜索接口自身静默期的恢复时刻。 */
   fullSearch: number;
+  /** IMDb 请求队列的退避恢复时刻。两个来源的限流互相独立，各存各的。 */
+  imdbQueue: number;
 }
 
-const EMPTY: BackoffState = { queue: 0, fullSearch: 0 };
+const EMPTY: BackoffState = { queue: 0, fullSearch: 0, imdbQueue: 0 };
 
 function asTimestamp(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
@@ -30,13 +32,17 @@ export async function loadBackoff(storage: StorageArea): Promise<BackoffState> {
   const stored = (await storage.get([KEY]))[KEY];
   if (typeof stored !== 'object' || stored === null) return EMPTY;
   const record = stored as Record<string, unknown>;
-  return { queue: asTimestamp(record['queue']), fullSearch: asTimestamp(record['fullSearch']) };
+  return {
+    queue: asTimestamp(record['queue']),
+    fullSearch: asTimestamp(record['fullSearch']),
+    imdbQueue: asTimestamp(record['imdbQueue']),
+  };
 }
 
 /**
  * 只更新其中一项，另一项保持原值。
  *
- * 队列退避和完整搜索静默期是独立触发的，各写各的字段，不能互相覆盖。
+ * 三处退避是独立触发的，各写各的字段，不能互相覆盖。
  */
 export async function saveBackoff(
   storage: StorageArea,
