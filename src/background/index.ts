@@ -1,4 +1,5 @@
 import { chromeLocalStorage, RatingCache } from './cache';
+import { probeDouban } from './probe';
 import { DoubanClient } from './douban/client';
 import { RatingLookup } from './lookup';
 import { RequestQueue } from './queue';
@@ -53,3 +54,7 @@ chrome.runtime.onMessage.addListener((request: ExtensionRequest, _sender, sendRe
   // 返回 true 告诉 Chrome 这个响应是异步的，否则消息通道会立刻关闭。
   return true;
 });
+
+// 临时诊断入口：在 service worker 的 Console 里执行 probeDouban() 可以逐个
+// 探测豆瓣的候选接口。选定可用接口、数据层改造完成后，连同 probe.ts 一起删掉。
+(globalThis as unknown as { probeDouban: typeof probeDouban }).probeDouban = probeDouban;
