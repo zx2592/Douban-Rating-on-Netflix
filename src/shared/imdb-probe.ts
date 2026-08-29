@@ -38,9 +38,96 @@ const GRAPHQL_URL = 'https://api.graphql.imdb.com/';
 const RATING_QUERY =
   'query TitleRating($id: ID!) { title(id: $id) { ratingsSummary { aggregateRating voteCount } } }';
 
+/**
+ * 取分路径的几种身份。
+ *
+ * 本机用 Node 跑的那轮结论很明确：检索四种语言全通，取分一条都不通 ——
+ * GraphQL 回 403，网页端全是 HTTP 202 + 约 2KB 的反爬拦截页。挡住 Node 的
+ * 多半是 TLS 指纹和 HTTP/2 帧序这类"整体不像浏览器"的特征，那是脚本补不出来的。
+ *
+ * 这个页面不一样：请求由 Chrome 自己发出，指纹是真的。所以同样的地址在这里
+ * 很可能直接就过 —— 这也是为什么必须在浏览器里再验一次。
+ *
+ * ⚠️ 一个硬限制：Origin 和 Referer 是 Fetch 规范里的禁止修改头，扩展设了也
+ * 会被浏览器忽略。所以如果 GraphQL 非要 `Origin: https://www.imdb.com` 才给过，
+ * 扩展这条路就是走不通的，得换方案 —— 这一点只有在这里才测得出来。
+ */
+const RATING_ATTEMPTS: Array<{ label: string; run: () => Promise<Response> }> = [
+  {
+    label: 'GraphQL · 裸请求',
+    run: () =>
+      fetch(GRAPHQL_URL, {
+        method: 'POST',
+        credentials: 'omit',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ query: RATING_QUERY, variables: { id: RATING_SAMPLE.id } }),
+      }),
+  },
+  {
+    label: 'GraphQL · 带 imdb 前端的自定义头',
+    run: () =>
+      fetch(GRAPHQL_URL, {
+        method: 'POST',
+        credentials: 'omit',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          // 这几个是自定义头，扩展可以设；Origin/Referer 设了也会被忽略。
+          'x-imdb-client-name': 'imdb-web-next',
+          'x-imdb-user-country': 'US',
+          'x-imdb-user-language': 'en-US',
+        },
+        body: JSON.stringify({ query: RATING_QUERY, variables: { id: RATING_SAMPLE.id } }),
+      }),
+  },
+  {
+    label: 'GraphQL · 用 GET',
+    run: () =>
+      fetch(
+        `${GRAPHQL_URL}?query=${encodeURIComponent(
+          `{ title(id: "${RATING_SAMPLE.id}") { ratingsSummary { aggregateRating voteCount } } }`,
+        )}`,
+        { credentials: 'omit', headers: { Accept: 'application/json' } },
+      ),
+  },
+  {
+    label: '条目页 www.imdb.com',
+    run: () =>
+      fetch(`https://www.imdb.com/title/${RATING_SAMPLE.id}/`, {
+        credentials: 'omit',
+        headers: { Accept: 'text/html' },
+      }),
+  },
+  {
+    label: '条目页 m.imdb.com（移动版）',
+    run: () =>
+      fetch(`https://m.imdb.com/title/${RATING_SAMPLE.id}/`, {
+        credentials: 'omit',
+        headers: { Accept: 'text/html' },
+      }),
+  },
+];
+
 const gap = (): Promise<void> => new Promise((r) => setTimeout(r, 400));
 
-export const IMDB_PROBE_TOTAL = SUGGESTION_ENDPOINTS.length * CASES.length + 2;
+export const IMDB_PROBE_TOTAL = SUGGESTION_ENDPOINTS.length * CASES.length + RATING_ATTEMPTS.length;
+
+/**
+ * 反爬拦截页的特征：2xx，但正文极小。
+ * 只看状态码会以为成功了，然后一路报「页面里没有评分数据」——
+ * 那个结论会把人引向"解析写错了"，而真实原因是根本没拿到页面。
+ */
+function challengeHint(status: number, body: string): string | null {
+  if (body.length > 50_000) return null;
+  const reasons: string[] = [];
+  if (status === 202) reasons.push('HTTP 202');
+  if (body.length < 50_000) reasons.push(`正文只有 ${body.length}B`);
+  const head = body.slice(0, 3000).toLowerCase();
+  for (const marker of ['captcha', 'unusual traffic', 'enable javascript', 'challenge']) {
+    if (head.includes(marker)) reasons.push(`含「${marker}」`);
+  }
+  return reasons.length >= 2 ? `🚧 疑似反爬拦截页（${reasons.join('；')}）` : null;
+}
 
 export async function runImdbProbe(
   onProgress?: (done: number, total: number, label: string) => void,
@@ -88,43 +175,32 @@ export async function runImdbProbe(
   }
 
   report.push(`===== 取分路径（样本：${RATING_SAMPLE.name} ${RATING_SAMPLE.id}）=====`);
+  report.push('本机用 Node 跑时这一组全军覆没，浏览器里未必 —— 见下。', '');
 
-  await gap();
-  report.push('--- 路径一：GraphQL（轻，首选）');
-  try {
-    const response = await fetch(GRAPHQL_URL, {
-      method: 'POST',
-      credentials: 'omit',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ query: RATING_QUERY, variables: { id: RATING_SAMPLE.id } }),
-    });
-    const body = await response.text();
-    report.push(`HTTP ${response.status} · ${body.length} 字节\n    ${body.slice(0, 600)}`);
-  } catch (error) {
-    report.push(`失败: ${String(error)}`);
-  }
-  tick('GraphQL 取分');
+  for (const attempt of RATING_ATTEMPTS) {
+    await gap();
+    try {
+      const response = await attempt.run();
+      const body = await response.text();
+      let summary = `HTTP ${response.status} · ${body.length} 字节`;
+      if (response.url && response.url !== GRAPHQL_URL) summary += ` · 最终地址 ${response.url}`;
 
-  await gap();
-  report.push('', '--- 路径二：条目页 JSON-LD（重，兜底）');
-  try {
-    const response = await fetch(`https://www.imdb.com/title/${RATING_SAMPLE.id}/`, {
-      credentials: 'omit',
-      headers: { Accept: 'text/html' },
-    });
-    const body = await response.text();
-    let summary = `HTTP ${response.status} · ${body.length} 字节 · 最终地址 ${response.url}`;
-    const marker = body.indexOf('aggregateRating');
-    // 只要能在页面里找到 aggregateRating 这段，兜底路径就是通的。
-    summary +=
-      marker < 0
-        ? '\n    ⚠️ 页面里没有 aggregateRating'
-        : `\n    ${body.slice(Math.max(0, marker - 60), marker + 260).replace(/\s+/g, ' ')}`;
-    report.push(summary);
-  } catch (error) {
-    report.push(`失败: ${String(error)}`);
+      const hint = challengeHint(response.status, body);
+      if (hint) summary += `\n    ${hint}`;
+
+      // 只要能在响应里找到评分字段，这条路就是通的。
+      const marker = /aggregateRating|ratingsSummary/.exec(body);
+      summary +=
+        marker && marker.index !== undefined
+          ? `\n    ✅ 找到评分数据：${body.slice(Math.max(0, marker.index - 60), marker.index + 240).replace(/\s+/g, ' ')}`
+          : `\n    ❌ 响应里没有评分字段。开头：${body.slice(0, 240).replace(/\s+/g, ' ')}`;
+      report.push(`[${attempt.label}] ${summary}`, '');
+    } catch (error) {
+      // 网络层直接失败（CORS、被拦、断网）在这里会走到。
+      report.push(`[${attempt.label}] 失败: ${String(error)}`, '');
+    }
+    tick(attempt.label);
   }
-  tick('条目页取分');
 
   return report.join('\n');
 }

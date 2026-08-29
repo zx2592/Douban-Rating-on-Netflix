@@ -219,6 +219,39 @@ const HEADER_VARIANTS = [
   },
 ];
 
+/**
+ * 完整的 Chrome 导航请求头。
+ *
+ * 第一轮实测：www.imdb.com 的每个页面都回 HTTP 202 + 约 2KB，而且 /find 对
+ * 四个完全不同的查询词返回的字节数一模一样 —— 那不是内容，是一张静态的反爬
+ * 拦截页。挡掉 Node 的多半不是缺哪一个头，而是整体"不像浏览器"。所以这里
+ * 把 Chrome 真实会发的那一整套都补齐，看能不能过关。
+ */
+const BROWSER_HEADERS = {
+  'User-Agent': CHROME_UA,
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+  'Sec-Fetch-User': '?1',
+  'Upgrade-Insecure-Requests': '1',
+  'sec-ch-ua': '"Chromium";v="131", "Not_A Brand";v="24"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"Windows"',
+};
+
+/** imdb.com 前端自己调 GraphQL 时会带的那几个头。 */
+const IMDB_GRAPHQL_HEADERS = {
+  'User-Agent': CHROME_UA,
+  Origin: 'https://www.imdb.com',
+  Referer: 'https://www.imdb.com/',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'x-imdb-client-name': 'imdb-web-next',
+  'x-imdb-user-country': 'US',
+  'x-imdb-user-language': 'en-US',
+};
+
 // -------------------------------------------------------------------- 工具层
 
 const results = [];
@@ -386,6 +419,26 @@ function extractCandidates(endpoint, rawBody) {
   return { entries, note: entries.length ? null : `${list.length} 条，但没有 tt 开头的条目` };
 }
 
+/**
+ * 判断一个响应像不像反爬拦截页，而不是真内容。
+ *
+ * 这个判断很要紧：拦截页也是 2xx，只看状态码会以为请求成功了，然后一路
+ * 报「页面里没有 ld+json」—— 那个结论会把人引向"解析写错了"，
+ * 而真实原因是"根本没拿到页面"。两者的修法南辕北辙。
+ */
+function looksLikeChallenge(res, expectContentBytes = 50_000) {
+  if (!res.ok) return null;
+  const reasons = [];
+  // 202 Accepted 对一个 GET 页面请求来说本身就很反常。
+  if (res.status === 202) reasons.push('HTTP 202（内容请求不该返回这个）');
+  if (res.bytes < expectContentBytes) reasons.push(`只有 ${res.bytes}B（正常内容远不止）`);
+  const head = res.body.slice(0, 3000).toLowerCase();
+  for (const marker of ['captcha', 'are you a robot', 'unusual traffic', 'enable javascript', 'challenge']) {
+    if (head.includes(marker)) reasons.push(`页面含「${marker}」`);
+  }
+  return reasons.length >= 2 ? reasons : null;
+}
+
 /** 在任意深度的对象里找第一个指定键。用于在陌生结构里定位数据。 */
 function findKeyDeep(node, key, depth = 0) {
   if (depth > 12 || node === null || typeof node !== 'object') return null;
@@ -512,10 +565,15 @@ async function testRating() {
       verdict = summary
         ? { usable: true, rating: summary }
         : { usable: false, note: parsed.ok ? res.body.slice(0, 220) : '不是 JSON' };
+    } else if (!res.httpOk) {
+      // 同上：非 2xx 不该走解析报告那条路。
+      verdict = { usable: false, note: `HTTP ${res.status}：${res.body.slice(0, 160).replace(/\s+/g, ' ')}` };
     } else {
       const page = summarizeTitlePage(res.body);
       const usable = page.jsonld.found || page.nextData.found;
-      verdict = { usable, ...page };
+      // 没解析到评分时，先分清是"解析写错了"还是"根本没拿到页面"。
+      const challenge = usable ? null : looksLikeChallenge(res);
+      verdict = { usable, challenge, ...page };
     }
 
     line(
@@ -524,6 +582,7 @@ async function testRating() {
         (verdict.rating ? ` · ${JSON.stringify(verdict.rating)}` : '') +
         (verdict.jsonld ? `\n       JSON-LD: ${verdict.jsonld.found ? JSON.stringify(verdict.jsonld) : verdict.jsonld.note}` : '') +
         (verdict.nextData ? `\n       __NEXT_DATA__: ${verdict.nextData.found ? JSON.stringify(verdict.nextData.value).slice(0, 160) : verdict.nextData.note}` : '') +
+        (verdict.challenge ? `\n       🚧 疑似反爬拦截页：${verdict.challenge.join('；')}` : '') +
         (!verdict.usable && verdict.note ? `\n       ${verdict.note}` : ''),
     );
 
@@ -540,6 +599,107 @@ async function testRating() {
   }
 
   results.push({ group: 'rating', table });
+  return table;
+}
+
+/**
+ * 第 2b 组：取分路径的深挖。
+ *
+ * 第一轮的结果把问题收敛得很干净：检索四种语言全通，取分一条都不通 ——
+ * GraphQL 回 403，三个网页端口全是 HTTP 202 + 2KB 的拦截页。所以第二轮
+ * 只针对取分，换各种身份再试，看拦得住 Node 的到底是哪一层。
+ */
+async function testRatingDeepDive() {
+  line('\n【2b】取分路径深挖（第一轮全部失败，这里换身份重试）');
+
+  const attempts = [
+    {
+      label: 'GraphQL + imdb.com 前端的整套头',
+      url: 'https://api.graphql.imdb.com/',
+      headers: { ...IMDB_GRAPHQL_HEADERS, Accept: 'application/json' },
+      body: { query: `{ title(id: "${SAMPLE.id}") { ratingsSummary { aggregateRating voteCount } } }` },
+    },
+    {
+      label: 'GraphQL + 只带 Origin/Referer',
+      url: 'https://api.graphql.imdb.com/',
+      headers: {
+        'User-Agent': CHROME_UA,
+        Origin: 'https://www.imdb.com',
+        Referer: 'https://www.imdb.com/',
+        Accept: 'application/json',
+      },
+      body: { query: `{ title(id: "${SAMPLE.id}") { ratingsSummary { aggregateRating voteCount } } }` },
+    },
+    {
+      // GraphQL over GET：有些网关只挡 POST。
+      label: 'GraphQL 用 GET（query 放在 URL 里）',
+      url:
+        'https://api.graphql.imdb.com/?query=' +
+        encodeURIComponent(`{ title(id: "${SAMPLE.id}") { ratingsSummary { aggregateRating voteCount } } }`),
+      headers: { ...IMDB_GRAPHQL_HEADERS, Accept: 'application/json' },
+    },
+    {
+      label: '条目页 + 完整 Chrome 导航头',
+      url: `https://www.imdb.com/title/${SAMPLE.id}/`,
+      headers: BROWSER_HEADERS,
+      html: true,
+    },
+    {
+      label: '条目页 + 完整头 + 中文 Accept-Language',
+      url: `https://www.imdb.com/title/${SAMPLE.id}/`,
+      headers: { ...BROWSER_HEADERS, 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' },
+      html: true,
+    },
+    {
+      // 老版轻量页面，历史上不吃同一套风控。
+      label: 'm.imdb.com 条目页 + 完整 Chrome 导航头',
+      url: `https://m.imdb.com/title/${SAMPLE.id}/`,
+      headers: BROWSER_HEADERS,
+      html: true,
+    },
+  ];
+
+  const table = [];
+  for (const attempt of attempts) {
+    await sleep(400);
+    const res = await probe({ url: attempt.url, headers: attempt.headers, body: attempt.body ?? null });
+    if (!res.ok) {
+      line(`  ❌ ${attempt.label}\n       ${res.error}`);
+      table.push({ label: attempt.label, ok: false, error: res.error });
+      continue;
+    }
+
+    let usable = false;
+    let detail = '';
+    // 非 2xx 一律先按 HTTP 错误报告。否则 403 会被描述成
+    // 「拿到页面但没有评分数据」—— 那句话会把人引向解析逻辑，
+    // 而真实原因是压根没拿到东西。
+    if (!res.httpOk) {
+      line(`  ❌ ${attempt.label}\n       HTTP ${res.status} · ${res.bytes}B\n       ${res.body.slice(0, 200).replace(/\s+/g, ' ')}`);
+      table.push({ label: attempt.label, ok: true, status: res.status, bytes: res.bytes, usable: false });
+      continue;
+    }
+    if (attempt.html) {
+      const page = summarizeTitlePage(res.body);
+      usable = page.jsonld.found || page.nextData.found;
+      const challenge = usable ? null : looksLikeChallenge(res);
+      detail = usable
+        ? `JSON-LD ${JSON.stringify(page.jsonld)}`
+        : challenge
+          ? `🚧 仍是拦截页：${challenge.join('；')}`
+          : `拿到页面但没有评分数据（ld+json:${page.jsonld.found} next:${page.nextData.found}）`;
+    } else {
+      const summary = findKeyDeep(tryJson(res.body).value, 'ratingsSummary');
+      usable = Boolean(summary);
+      detail = usable ? JSON.stringify(summary) : res.body.slice(0, 200).replace(/\s+/g, ' ');
+    }
+
+    line(`  ${mark(usable)} ${attempt.label}\n       HTTP ${res.status} · ${(res.bytes / 1024).toFixed(0)}KB · ${res.ms}ms\n       ${detail}`);
+    keep(`deep_${slug(attempt.label) || table.length}.txt`, res.body);
+    table.push({ label: attempt.label, ok: true, status: res.status, bytes: res.bytes, usable, detail });
+  }
+
+  results.push({ group: 'rating-deep', table });
   return table;
 }
 
@@ -647,7 +807,7 @@ async function testEndToEnd(title, workingSearch, workingRating) {
 
 // ---------------------------------------------------------------------- 结论
 
-function conclude(searchTable, ratingTable) {
+function conclude(searchTable, ratingTable, deepTable) {
   line('\n' + '='.repeat(72));
   line('结论');
   line('='.repeat(72));
@@ -676,9 +836,29 @@ function conclude(searchTable, ratingTable) {
   }
 
   line('\n可用的取分路径：');
-  if (goodRating.length === 0) line('  ❌ 一条都没有');
+  if (goodRating.length === 0) line('  ❌ 第一轮一条都没有');
   for (const row of goodRating) {
     line(`  ✅ ${RATING_ENDPOINTS.find((e) => e.id === row.endpoint).label}  （${(row.bytes / 1024).toFixed(0)}KB / ${row.ms}ms）`);
+  }
+
+  const goodDeep = (deepTable ?? []).filter((row) => row.usable);
+  if (deepTable) {
+    line('\n换身份重试之后：');
+    if (goodDeep.length === 0) {
+      line('  ❌ 仍然一条都不通。');
+      const blocked = (ratingTable ?? []).some((row) => row.verdict?.challenge);
+      if (blocked) {
+        line('');
+        line('  网页端返回的是反爬拦截页（2xx + 极小的固定长度正文），');
+        line('  说明挡住的不是某一个请求头，而是整体"不像真浏览器"——');
+        line('  TLS 指纹、HTTP/2 帧序这些，Node 补不出来。');
+        line('');
+        line('  ⇒ 下一步必须在浏览器里验证：扩展弹窗 →「检索接口诊断」→');
+        line('    「运行 IMDb 诊断」。扩展的请求由 Chrome 自己发出，指纹是真的，');
+        line('    很有可能直接就过。这台机器上 Node 的结果不能代表扩展里的结果。');
+      }
+    }
+    for (const row of goodDeep) line(`  ✅ ${row.label}\n       ${row.detail}`);
   }
 
   if (goodSearch.length === 0 && goodRating.length === 0) {
@@ -886,6 +1066,12 @@ async function main() {
   let ratingTable = null;
   if (run('search')) searchTable = await testSearch();
   if (run('rating')) ratingTable = await testRating();
+  let deepTable = null;
+  // 取分全军覆没时才深挖 —— 有一条能用就不必再换身份试了。
+  if (run('rating') && ratingTable && !ratingTable.some((row) => row.ok && row.verdict?.usable)) {
+    deepTable = await testRatingDeepDive();
+  }
+  if (ONLY === 'deep') deepTable = await testRatingDeepDive();
 
   const bestSearch = (searchTable ?? []).find((row) =>
     row.perQuery.some((q) => q.ok && q.verdict?.usable),
@@ -896,7 +1082,7 @@ async function main() {
   if (run('dataset')) await testDataset();
   if (E2E_TITLE && run('e2e')) await testEndToEnd(E2E_TITLE, bestSearch, bestRating);
 
-  conclude(searchTable, ratingTable);
+  conclude(searchTable, ratingTable, deepTable);
 
   // 落盘：结构化结果 + 每个响应的原文，方便把真实字节发回来。
   await mkdir(outDir, { recursive: true });
