@@ -26,6 +26,14 @@ export interface QueueOptions {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
+  /**
+   * 退避状态变化时回调，用于持久化。
+   *
+   * MV3 的 service worker 闲置约 30 秒就被回收，重启后队列是全新的，退避记录
+   * 随之丢失 —— 用户每次停顿后再滚动，扩展都会在豆瓣仍在限流时立刻重新开打，
+   * 越打越深。退避必须能跨重启存活。传 0 表示解除。
+   */
+  onBackoffChange?: (until: number) => void;
 }
 
 interface QueueItem {
@@ -46,6 +54,7 @@ export class RequestQueue {
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly random: () => number;
+  private readonly onBackoffChange: (until: number) => void;
 
   private readonly items: QueueItem[] = [];
   private draining = false;
@@ -70,6 +79,20 @@ export class RequestQueue {
     this.now = options.now ?? (() => Date.now());
     this.sleep = options.sleep ?? defaultSleep;
     this.random = options.random ?? Math.random;
+    this.onBackoffChange = options.onBackoffChange ?? (() => {});
+  }
+
+  /**
+   * 恢复上次进程留下的退避状态。service worker 重启后由 background 调用。
+   *
+   * currentBackoffMs 一并按剩余时长恢复，这样若继续被限流，指数退避会从
+   * 当前深度接着翻倍，而不是退回初始值重新来过。
+   */
+  restoreBackoff(until: number): void {
+    const remaining = until - this.now();
+    if (remaining <= 0) return;
+    this.backoffUntilAt = until;
+    this.currentBackoffMs = Math.min(remaining, this.maxBackoffMs);
   }
 
   /** 正处于退避期时返回恢复时间戳，否则返回 null。 */
@@ -112,6 +135,7 @@ export class RequestQueue {
         : Math.min(this.currentBackoffMs * 2, this.maxBackoffMs));
     this.currentBackoffMs = Math.min(next, this.maxBackoffMs);
     this.backoffUntilAt = this.now() + this.currentBackoffMs;
+    this.onBackoffChange(this.backoffUntilAt);
 
     // 已经排队的任务不必再去撞墙，一并拒掉。
     const queued = this.items.splice(0, this.items.length);
@@ -120,8 +144,11 @@ export class RequestQueue {
 
   /** 请求成功后调用，解除退避并重置退避步长。 */
   noteSuccess(): void {
+    const wasBackedOff = this.backoffUntilAt !== 0;
     this.currentBackoffMs = 0;
     this.backoffUntilAt = 0;
+    // 只在状态真的变化时通知，避免每个成功请求都写一次存储。
+    if (wasBackedOff) this.onBackoffChange(0);
   }
 
   private async drain(): Promise<void> {

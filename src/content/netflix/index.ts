@@ -21,6 +21,14 @@ const IDENTITY_ATTR = 'data-dbr-identity';
 const SCAN_DEBOUNCE_MS = 250;
 /** 提前于视口这么多像素开始查询，让用户滚到时评分已经就位。 */
 const PREFETCH_MARGIN = '300px';
+/**
+ * 卡片要在视野里停留这么久才真的去查豆瓣。
+ *
+ * 豆瓣对匿名请求的配额很紧，每个请求都很珍贵。快速滚动时会有大量卡片一闪
+ * 而过，若一进入视口就排队，配额全花在用户根本没看的封面上，真正停下来看的
+ * 那几张反而排在后面拿不到。
+ */
+const DWELL_MS = 600;
 /** 打开页面这么久之后若一张卡片都没找到，多半是 Netflix 改版了。 */
 const SELECTOR_HEALTHCHECK_MS = 8000;
 
@@ -74,21 +82,44 @@ function toBadgeState(outcome: LookupOutcome): BadgeState | null {
   }
 }
 
+/** 当前停留在视野里的卡片。滚走的会被移除，用于驻留判定。 */
+const inViewport = new WeakSet<Element>();
+/** 已排上驻留计时的卡片，避免同一张卡反复计时。 */
+const dwelling = new WeakSet<Element>();
+
 const viewportObserver = new IntersectionObserver(
   (entries) => {
-    const visible = entries.filter((entry) => entry.isIntersecting);
-    if (visible.length === 0) return;
+    const arrived: IntersectionObserverEntry[] = [];
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        inViewport.add(entry.target);
+        if (!dwelling.has(entry.target)) arrived.push(entry);
+      } else {
+        // 滚走了：从视野集合里移除。此处刻意不 unobserve —— 用户往回滚时
+        // 这张卡片还要能重新触发。
+        inViewport.delete(entry.target);
+      }
+    }
+    if (arrived.length === 0) return;
 
     // 按视觉顺序（从上到下、从左到右）处理。后台请求是串行限速的，
     // 先到先得，让用户视线所及的卡片先出分。
-    visible.sort((a, b) => {
+    arrived.sort((a, b) => {
       const rowDiff = a.boundingClientRect.top - b.boundingClientRect.top;
       return Math.abs(rowDiff) > 24 ? rowDiff : a.boundingClientRect.left - b.boundingClientRect.left;
     });
 
-    for (const entry of visible) {
-      viewportObserver.unobserve(entry.target);
-      void processCard(entry.target as HTMLElement);
+    for (const entry of arrived) {
+      const card = entry.target as HTMLElement;
+      dwelling.add(card);
+      setTimeout(() => {
+        dwelling.delete(card);
+        // 计时期间滚走了就放弃，把配额留给用户真正停下来看的卡片。
+        if (!inViewport.has(card) || !card.isConnected) return;
+        viewportObserver.unobserve(card);
+        inViewport.delete(card);
+        void processCard(card);
+      }, DWELL_MS);
     }
   },
   { rootMargin: PREFETCH_MARGIN },

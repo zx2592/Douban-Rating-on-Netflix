@@ -37,17 +37,32 @@ class FakeIntersectionObserver {
   }
 }
 
-/** 让所有被观察的元素同时进入视口。 */
-function scrollIntoView(): void {
-  const entries = observedElements.map(
-    (target, index) =>
-      ({
-        target,
-        isIntersecting: true,
-        boundingClientRect: { top: index * 100, left: 0 } as DOMRectReadOnly,
-      }) as unknown as IntersectionObserverEntry,
+function notify(targets: Element[], isIntersecting: boolean): void {
+  intersectionCallback?.(
+    targets.map(
+      (target, index) =>
+        ({
+          target,
+          isIntersecting,
+          boundingClientRect: { top: index * 100, left: 0 } as DOMRectReadOnly,
+        }) as unknown as IntersectionObserverEntry,
+    ),
   );
-  intersectionCallback?.(entries);
+}
+
+/** 让所有被观察的元素进入视口。 */
+function scrollIntoView(): void {
+  notify([...observedElements], true);
+}
+
+/** 让指定元素离开视口。 */
+function scrollOutOfView(targets: Element[]): void {
+  notify(targets, false);
+}
+
+/** 卡片要在视野里停留 600ms 才会真的去查豆瓣，等过这段时间。 */
+async function pastDwell(): Promise<void> {
+  await settle(800);
 }
 
 /** 等若干轮微任务 + 定时器，让内容脚本里的异步流程跑完。 */
@@ -136,6 +151,60 @@ async function loadContentScript(): Promise<void> {
   await settle(50);
 }
 
+describe('省配额：驻留判定', () => {
+  it('卡片一闪而过时不花配额', async () => {
+    // 豆瓣对匿名请求的配额很紧。快速滚动会让大量卡片掠过视口，若一进入
+    // 就排队，配额全花在用户根本没看的封面上。
+    document.body.innerHTML = CARD_HTML;
+    await loadContentScript();
+
+    const observed = [...observedElements];
+    scrollIntoView();
+    scrollOutOfView(observed);
+    await pastDwell();
+
+    expect(lookupRequests).toHaveLength(0);
+  });
+
+  it('停下来看的卡片照常查询', async () => {
+    document.body.innerHTML = CARD_HTML;
+    await loadContentScript();
+
+    scrollIntoView();
+    await pastDwell();
+
+    expect(lookupRequests).toHaveLength(1);
+  });
+
+  it('刚进入视口、还没到驻留时间时不发请求', async () => {
+    document.body.innerHTML = CARD_HTML;
+    await loadContentScript();
+
+    scrollIntoView();
+    await settle(200);
+    expect(lookupRequests).toHaveLength(0);
+
+    await settle(700);
+    expect(lookupRequests).toHaveLength(1);
+  });
+
+  it('掠过之后又滚回来，仍然能查到', async () => {
+    // 掠过时不 unobserve，用户往回滚这张卡片还要能重新触发。
+    document.body.innerHTML = CARD_HTML;
+    await loadContentScript();
+
+    const observed = [...observedElements];
+    scrollIntoView();
+    scrollOutOfView(observed);
+    await pastDwell();
+    expect(lookupRequests).toHaveLength(0);
+
+    notify(observed, true);
+    await pastDwell();
+    expect(lookupRequests).toHaveLength(1);
+  });
+});
+
 describe('内容脚本整体链路', () => {
   it('卡片进入视口后，角标带着豆瓣评分出现', async () => {
     document.body.innerHTML = CARD_HTML;
@@ -146,7 +215,7 @@ describe('内容脚本整体链路', () => {
     expect(observedElements).toHaveLength(1);
 
     scrollIntoView();
-    await settle();
+    await pastDwell();
 
     const badge = document.querySelector('.dbr-badge');
     expect(badge).not.toBeNull();
@@ -158,7 +227,7 @@ describe('内容脚本整体链路', () => {
     document.body.innerHTML = CARD_HTML;
     await loadContentScript();
     scrollIntoView();
-    await settle();
+    await pastDwell();
 
     const badge = document.querySelector('.dbr-badge');
     // 落点必须是直接包着封面图的容器，否则绝对定位会跑偏。
@@ -170,7 +239,7 @@ describe('内容脚本整体链路', () => {
     await loadContentScript();
     await settle(400);
     scrollIntoView();
-    await settle();
+    await pastDwell();
 
     expect(lookupRequests).toHaveLength(0);
     expect(document.querySelector('.dbr-badge')).toBeNull();
@@ -190,7 +259,7 @@ describe('内容脚本整体链路', () => {
     document.body.innerHTML = CARD_HTML;
     await loadContentScript();
     scrollIntoView();
-    await settle();
+    await pastDwell();
 
     expect(document.querySelector('.dbr-badge')).toBeNull();
   });
@@ -200,7 +269,7 @@ describe('内容脚本整体链路', () => {
     document.body.innerHTML = CARD_HTML;
     await loadContentScript();
     scrollIntoView();
-    await settle();
+    await pastDwell();
 
     expect(document.querySelector('.dbr-badge')).toBeNull();
   });
@@ -209,7 +278,7 @@ describe('内容脚本整体链路', () => {
     document.body.innerHTML = CARD_HTML;
     await loadContentScript();
     scrollIntoView();
-    await settle();
+    await pastDwell();
 
     // 制造一次 DOM 变动，触发重新扫描。
     document.body.appendChild(document.createElement('div'));
@@ -222,14 +291,14 @@ describe('内容脚本整体链路', () => {
     document.body.innerHTML = CARD_HTML;
     await loadContentScript();
     scrollIntoView();
-    await settle();
+    await pastDwell();
     expect(lookupRequests).toHaveLength(1);
 
     // Netflix 的横向列表会回收 DOM 节点给下一部片子用。
     document.querySelector('[data-uia="standard-card"]')!.setAttribute('aria-label', '鱿鱼游戏');
     await settle(400);
     scrollIntoView();
-    await settle();
+    await pastDwell();
 
     expect(lookupRequests).toHaveLength(2);
     expect(lookupRequests[1]).toMatchObject({ title: '鱿鱼游戏' });

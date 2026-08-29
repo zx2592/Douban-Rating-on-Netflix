@@ -1,3 +1,4 @@
+import { loadBackoff, saveBackoff } from './backoff-store';
 import { chromeLocalStorage, RatingCache, sweepLegacyEntries } from './cache';
 import { runProbe } from '../shared/probe';
 import { DoubanClient } from './douban/client';
@@ -15,16 +16,38 @@ import type { LookupOutcome } from '../shared/types';
  * 落盘的评分缓存在 chrome.storage.local 里，重启后照常命中。
  */
 
-// 清理旧版本的缓存条目（接口失效期间写入的「未收录」不能等 12 小时 TTL）。
-void sweepLegacyEntries(chromeLocalStorage());
+const storage = chromeLocalStorage();
 
-const queue = new RequestQueue();
-const cache = new RatingCache(chromeLocalStorage());
-const lookup = new RatingLookup(cache, new DoubanClient(queue));
+// 清理旧版本的缓存条目（接口失效期间写入的「未收录」不能等 12 小时 TTL）。
+void sweepLegacyEntries(storage);
+
+const queue = new RequestQueue({
+  onBackoffChange: (until) => void saveBackoff(storage, { queue: until }),
+});
+const cache = new RatingCache(storage);
+const client = new DoubanClient(queue, {
+  onFullSearchBackoffChange: (until) => void saveBackoff(storage, { fullSearch: until }),
+});
+const lookup = new RatingLookup(cache, client);
+
+/**
+ * 恢复上一次进程留下的退避状态。
+ *
+ * service worker 每次冷启动都会重新执行本模块，若不恢复，扩展会在豆瓣仍在
+ * 限流时立刻重新开打 —— 而 MV3 的 worker 闲置 30 秒就被回收，用户稍作停顿
+ * 再滚动就会触发一次，等于持续把限流打得更深。
+ */
+const backoffRestored = (async () => {
+  const state = await loadBackoff(storage);
+  queue.restoreBackoff(state.queue);
+  client.restoreFullSearchBackoff(state.fullSearch);
+})();
 
 async function handle(request: ExtensionRequest): Promise<ExtensionResponse> {
   switch (request.kind) {
     case 'lookup': {
+      // 等退避状态恢复完再放行，否则冷启动后的头几个请求会绕过退避。
+      await backoffRestored;
       const settings = await loadSettings();
       const outcome: LookupOutcome =
         settings.enabled && settings.sites.netflix

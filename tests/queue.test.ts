@@ -191,3 +191,75 @@ describe('RequestQueue 退避', () => {
     expect(queue.backoffUntil).toBe(clock.now() + 1000);
   });
 });
+
+describe('退避跨 service worker 重启存活', () => {
+  it('进入退避时通过回调把恢复时刻交出去', () => {
+    const clock = virtualClock();
+    const saved: number[] = [];
+    const queue = new RequestQueue({
+      initialBackoffMs: 30_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      onBackoffChange: (until) => saved.push(until),
+    });
+
+    queue.noteRateLimited();
+    expect(saved).toEqual([30_000]);
+  });
+
+  it('解除退避时通知一次，但成功请求不会每次都写', () => {
+    const clock = virtualClock();
+    const saved: number[] = [];
+    const queue = new RequestQueue({
+      now: clock.now,
+      sleep: clock.sleep,
+      onBackoffChange: (until) => saved.push(until),
+    });
+
+    // 没进过退避时的成功请求不该产生写入。
+    queue.noteSuccess();
+    expect(saved).toEqual([]);
+
+    queue.noteRateLimited();
+    queue.noteSuccess();
+    queue.noteSuccess();
+    // 一次进入 + 一次解除，第二次成功不再重复写。
+    expect(saved).toHaveLength(2);
+    expect(saved[1]).toBe(0);
+  });
+
+  it('重启后恢复退避，仍在期内的请求照样被拒', async () => {
+    // 不恢复的话，worker 每次冷启动都会在豆瓣仍限流时立刻重新开打。
+    const clock = virtualClock();
+    const queue = new RequestQueue({ now: clock.now, sleep: clock.sleep });
+
+    queue.restoreBackoff(30_000);
+    expect(queue.backoffUntil).toBe(30_000);
+    await expect(queue.enqueue(async () => 'x')).rejects.toBeInstanceOf(RateLimitedError);
+  });
+
+  it('恢复已经过期的退避等于没有退避', async () => {
+    const clock = virtualClock();
+    const queue = new RequestQueue({ minIntervalMs: 0, jitterMs: 0, now: clock.now, sleep: clock.sleep });
+
+    clock.advance(50_000);
+    queue.restoreBackoff(30_000);
+    expect(queue.backoffUntil).toBeNull();
+    await expect(queue.enqueue(async () => 'ok')).resolves.toBe('ok');
+  });
+
+  it('恢复后继续被限流时，退避从当前深度接着翻倍', () => {
+    // 退回初始值重新来过的话，反复重启会让退避永远长不起来。
+    const clock = virtualClock();
+    const queue = new RequestQueue({
+      initialBackoffMs: 1000,
+      maxBackoffMs: 60_000,
+      now: clock.now,
+      sleep: clock.sleep,
+    });
+
+    queue.restoreBackoff(8000);
+    queue.noteRateLimited();
+    expect(queue.backoffUntil).toBe(16_000);
+  });
+});

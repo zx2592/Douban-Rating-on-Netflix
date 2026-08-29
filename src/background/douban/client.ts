@@ -30,6 +30,8 @@ const ANTI_BOT_MARKERS = ['sec.douban.com', '有异常请求', '检测到有异�
 export interface DoubanClientOptions {
   /** 单测里替换成假的 fetch。 */
   fetchImpl?: typeof fetch;
+  /** 完整搜索的静默期变化时回调，用于跨 service worker 重启持久化。 */
+  onFullSearchBackoffChange?: (until: number) => void;
 }
 
 function looksLikeAntiBot(body: string, finalUrl: string): boolean {
@@ -51,12 +53,19 @@ function looksLikeAntiBot(body: string, finalUrl: string): boolean {
  */
 export class DoubanClient {
   private readonly fetchImpl: typeof fetch;
+  private readonly onFullSearchBackoffChange: (until: number) => void;
 
   constructor(
     private readonly queue: RequestQueue,
     options: DoubanClientOptions = {},
   ) {
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.onFullSearchBackoffChange = options.onFullSearchBackoffChange ?? (() => {});
+  }
+
+  /** 恢复上次进程留下的完整搜索静默期。service worker 重启后由 background 调用。 */
+  restoreFullSearchBackoff(until: number): void {
+    if (until > Date.now()) this.fullSearchBackoffUntil = until;
   }
 
   /** 完整搜索的软限流截止时刻。只限制这一个接口，不牵连 suggest。 */
@@ -90,6 +99,7 @@ export class DoubanClient {
       // 软限流：HTTP 200、结构完好、items 为空、只有这个字段说了实话。
       // 只静默本接口，不动全局队列 —— suggest 和取分不受它牵连。
       this.fullSearchBackoffUntil = Date.now() + FULL_SEARCH_BACKOFF_MS;
+      this.onFullSearchBackoffChange(this.fullSearchBackoffUntil);
       throw new RateLimitedError(FULL_SEARCH_BACKOFF_MS);
     }
     return parseSearchResults(data);
