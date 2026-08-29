@@ -42,9 +42,24 @@ export class RatingLookup {
       // 依次尝试各个检索词，命中即止。用去掉季数后缀的主标题去搜，召回更广；
       // 具体是哪一季交给匹配器判断，因为豆瓣的候选标题里本来就带着
       // "第二季" 这样的后缀。
+      //
+      // 每个检索词走两级：先 suggest（轻、限流松），拿不到可信匹配再上
+      // 完整搜索（召回宽、限流严）。suggest 返回空既可能是真没有也可能是
+      // 它在限流，无法区分，所以必须有第二级兜底。
       let best = null;
       for (const term of buildSearchTerms(query.title)) {
-        best = pickBestMatch(query, await this.client.search(term));
+        best = pickBestMatch(query, await this.client.suggest(term));
+        if (best) break;
+        try {
+          best = pickBestMatch(query, await this.client.fullSearch(term));
+        } catch (error) {
+          // 完整搜索限流或静默期中：suggest 已经没找到，此时不能断定
+          // "豆瓣没这部片"，按暂时性错误处理，绝不能写进缓存。
+          if (error instanceof RateLimitedError) {
+            return { status: 'error', reason: error.message, retryAfterMs: error.retryAfterMs };
+          }
+          throw error;
+        }
         if (best) break;
       }
       if (!best) {

@@ -1,17 +1,26 @@
 import type { Candidate } from '../matcher';
 import { RateLimitedError, type RequestQueue } from '../queue';
-import { parseSubjectAbstract, type RatingDetail } from './parse';
+import { parseSubjectAbstract, parseSuggest, type RatingDetail } from './parse';
 import { extractEmbeddedData, parseSearchResults } from './search';
 
 /**
- * 检索接口。
+ * 两个检索入口，主备关系（都实测过）：
  *
- * 用完整搜索而不是 subject_suggest：实测后者已经废了，对任何查询词都返回
- * 空数组，连简体主标题都查不到。完整搜索则对英文、简体、繁体台译三种输入
- * 都能命中，因为它会检索条目的「又名」。
+ * - subject_suggest：主。轻（几百字节）、带年份和原名、简体和英文都能查
+ *   （繁体查不到，靠上层先做繁转简）。它被限流时的表现是返回空数组而不是
+ *   报错 —— 一度让我们误判它「彻底废了」。
+ * - subject_search 完整搜索：备。召回宽得多（会搜「又名」，港台译名靠它），
+ *   且结果自带评分；但对无 cookie 访问的限流极严，几次就触发软限流：
+ *   HTTP 200 + error_info:"搜索访问太频繁。" + items 空。这个形态曾被当成
+ *   有效的空结果缓存成「未收录」，是一整轮全部片子显示未收录的直接原因 ——
+ *   所以 error_info 非空必须按限流处理，绝不能当成"豆瓣没这部片"。
  */
+const SUGGEST_URL = 'https://movie.douban.com/j/subject_suggest';
 const SEARCH_URL = 'https://search.douban.com/movie/subject_search';
 const ABSTRACT_URL = 'https://movie.douban.com/j/subject_abstract';
+
+/** 完整搜索触发软限流后的静默期。期间直接跳过它，不再白费请求。 */
+const FULL_SEARCH_BACKOFF_MS = 5 * 60_000;
 
 const REQUEST_TIMEOUT_MS = 8000;
 
@@ -50,15 +59,39 @@ export class DoubanClient {
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
+  /** 完整搜索的软限流截止时刻。只限制这一个接口，不牵连 suggest。 */
+  private fullSearchBackoffUntil = 0;
+
   /**
-   * 按标题检索候选条目。
-   *
-   * 返回的候选通常已经带上评分（搜索结果页里就有），命中后不必再单独取一次分。
+   * 主检索：subject_suggest。轻量，候选带年份和原名，但不带评分
+   * （由上层用 fetchRating 补）。返回空数组既可能是真没有，也可能是它在
+   * 限流 —— 无法区分，所以上层拿不到可信匹配时要再试 fullSearch。
    */
-  async search(title: string): Promise<Candidate[]> {
+  async suggest(title: string): Promise<Candidate[]> {
+    const url = `${SUGGEST_URL}?q=${encodeURIComponent(title)}`;
+    const body = await this.request(url, 'application/json');
+    return parseSuggest(this.parseJson(body, '豆瓣检索接口'));
+  }
+
+  /**
+   * 兜底检索：完整搜索。召回宽（含港台译名），候选自带评分；
+   * 软限流严，触发后本方法静默 5 分钟，避免每张卡片都去撞一次。
+   */
+  async fullSearch(title: string): Promise<Candidate[]> {
+    if (Date.now() < this.fullSearchBackoffUntil) {
+      throw new Error('豆瓣完整搜索仍在限流静默期');
+    }
     const url = `${SEARCH_URL}?cat=1002&search_text=${encodeURIComponent(title)}`;
     const data = extractEmbeddedData(await this.request(url, 'text/html'));
     if (data === null) throw new Error('豆瓣搜索页的结构已变化');
+
+    const errorInfo = (data as Record<string, unknown>)['error_info'];
+    if (typeof errorInfo === 'string' && errorInfo.trim()) {
+      // 软限流：HTTP 200、结构完好、items 为空、只有这个字段说了实话。
+      // 只静默本接口，不动全局队列 —— suggest 和取分不受它牵连。
+      this.fullSearchBackoffUntil = Date.now() + FULL_SEARCH_BACKOFF_MS;
+      throw new RateLimitedError(FULL_SEARCH_BACKOFF_MS);
+    }
     return parseSearchResults(data);
   }
 

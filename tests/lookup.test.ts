@@ -27,23 +27,32 @@ function memoryStorage(): StorageArea {
 }
 
 interface FakeClientOptions {
+  /** suggest（主检索）返回的候选。 */
   candidates?: Candidate[];
+  /** fullSearch（兜底检索）返回的候选，默认为空。 */
+  fullSearchCandidates?: Candidate[];
   detail?: RatingDetail | null;
   searchError?: Error;
+  fullSearchError?: Error;
   ratingError?: Error;
 }
 
 function fakeClient(options: FakeClientOptions = {}) {
-  const search = vi.fn(async (_term: string): Promise<Candidate[]> => {
+  const suggest = vi.fn(async (_term: string): Promise<Candidate[]> => {
     if (options.searchError) throw options.searchError;
     return options.candidates ?? [];
+  });
+  const fullSearch = vi.fn(async (_term: string): Promise<Candidate[]> => {
+    if (options.fullSearchError) throw options.fullSearchError;
+    return options.fullSearchCandidates ?? [];
   });
   const fetchRating = vi.fn(async (_id: string): Promise<RatingDetail | null> => {
     if (options.ratingError) throw options.ratingError;
     return options.detail ?? { score: 7.4, votes: 1000 };
   });
-  return { search, fetchRating } as unknown as DoubanClient & {
-    search: typeof search;
+  return { suggest, fullSearch, fetchRating } as unknown as DoubanClient & {
+    suggest: typeof suggest;
+    fullSearch: typeof fullSearch;
     fetchRating: typeof fetchRating;
   };
 }
@@ -75,14 +84,14 @@ describe('RatingLookup 正常路径', () => {
       status: 'ok',
       rating: { id: '35131346', title: '河边的错误', score: 7.4, votes: 1000 },
     });
-    expect(client.search).toHaveBeenCalledWith('河边的错误');
+    expect(client.suggest).toHaveBeenCalledWith('河边的错误');
     expect(client.fetchRating).toHaveBeenCalledWith('35131346');
   });
 
   it('搜索时用去掉季数后缀的主标题', async () => {
     const { lookup, client } = makeLookup({ candidates: [] });
     await lookup.lookup({ title: '怪奇物语 第四季', type: 'tv' });
-    expect(client.search).toHaveBeenCalledWith('怪奇物语');
+    expect(client.suggest).toHaveBeenCalledWith('怪奇物语');
   });
 
   it('Netflix 界面为英文时，靠豆瓣的英文原名匹配上中文条目', async () => {
@@ -107,8 +116,8 @@ describe('RatingLookup 正常路径', () => {
     expect(outcome.status).toBe('ok');
     if (outcome.status === 'ok') expect(outcome.rating.title).toBe('星河战队');
     // 英文查询只发一次检索请求，不需要再试别的写法。
-    expect(client.search).toHaveBeenCalledTimes(1);
-    expect(client.search).toHaveBeenCalledWith('Starship Troopers');
+    expect(client.suggest).toHaveBeenCalledTimes(1);
+    expect(client.suggest).toHaveBeenCalledWith('Starship Troopers');
   });
 
   it('繁体片名先用简体去搜', async () => {
@@ -128,12 +137,12 @@ describe('RatingLookup 正常路径', () => {
 
     const outcome = await lookup.lookup({ title: '魷魚遊戲', year: 2021, type: 'tv' });
     expect(outcome.status).toBe('ok');
-    expect(client.search).toHaveBeenCalledWith('鱿鱼游戏');
+    expect(client.suggest).toHaveBeenCalledWith('鱿鱼游戏');
   });
 
   it('第一个检索词没命中时会换下一个再试', async () => {
     const client = fakeClient();
-    (client.search as ReturnType<typeof vi.fn>)
+    (client.suggest as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         {
@@ -150,7 +159,7 @@ describe('RatingLookup 正常路径', () => {
 
     const outcome = await lookup.lookup({ title: '魷魚遊戲', year: 2021, type: 'tv' });
     expect(outcome.status).toBe('ok');
-    expect(client.search).toHaveBeenCalledTimes(2);
+    expect(client.suggest).toHaveBeenCalledTimes(2);
   });
 
   it('豆瓣尚未出分时返回 ok 且 score 为 null', async () => {
@@ -199,7 +208,7 @@ describe('RatingLookup 三种输入都要能命中同一部片', () => {
     const { lookup, client } = makeLookup({ candidates: [starship] });
     await lookup.lookup({ title: 'Starship Troopers', type: 'unknown' });
 
-    expect(client.search).toHaveBeenCalledTimes(1);
+    expect(client.suggest).toHaveBeenCalledTimes(1);
     expect(client.fetchRating).not.toHaveBeenCalled();
   });
 
@@ -222,26 +231,70 @@ describe('RatingLookup 三种输入都要能命中同一部片', () => {
   });
 });
 
+describe('两级检索', () => {
+  it('suggest 没有可信匹配时，用完整搜索兜底', async () => {
+    // suggest 被限流时的表现是返回空数组，和"真没有"无法区分，必须兜底。
+    const { lookup, client } = makeLookup({
+      candidates: [],
+      fullSearchCandidates: [matchingCandidate],
+    });
+
+    const outcome = await lookup.lookup(query);
+    expect(outcome.status).toBe('ok');
+    expect(client.fullSearch).toHaveBeenCalled();
+  });
+
+  it('suggest 直接命中时不动完整搜索（它限流严，能省则省）', async () => {
+    const { lookup, client } = makeLookup({ candidates: [matchingCandidate] });
+    await lookup.lookup(query);
+    expect(client.fullSearch).not.toHaveBeenCalled();
+  });
+
+  it('suggest 未中且完整搜索被软限流时，返回 error 且绝不写缓存', async () => {
+    // 这是「全部显示未收录」事故的根源：搜索被限流曾被当成"豆瓣没这部片"
+    // 缓存 12 小时。suggest 没找到 + 搜索被限，此时什么结论都下不了。
+    const client = fakeClient({
+      candidates: [],
+      fullSearchError: new RateLimitedError(300_000),
+    });
+    const lookup = new RatingLookup(new RatingCache(memoryStorage()), client);
+
+    const first = await lookup.lookup(query);
+    expect(first).toMatchObject({ status: 'error', retryAfterMs: 300_000 });
+
+    // 第二次查询必须重新发请求 —— 证明上一次没有被缓存成 not_found。
+    (client.fullSearch as ReturnType<typeof vi.fn>).mockResolvedValueOnce([matchingCandidate]);
+    expect((await lookup.lookup(query)).status).toBe('ok');
+  });
+
+  it('两级都真的没有结果时才是 not_found', async () => {
+    const { lookup, client } = makeLookup({ candidates: [], fullSearchCandidates: [] });
+    expect((await lookup.lookup(query)).status).toBe('not_found');
+    expect(client.suggest).toHaveBeenCalled();
+    expect(client.fullSearch).toHaveBeenCalled();
+  });
+});
+
 describe('RatingLookup 缓存', () => {
   it('第二次查询直接命中缓存，不再请求豆瓣', async () => {
     const { lookup, client } = makeLookup({ candidates: [matchingCandidate] });
     await lookup.lookup(query);
     await lookup.lookup(query);
-    expect(client.search).toHaveBeenCalledTimes(1);
+    expect(client.suggest).toHaveBeenCalledTimes(1);
   });
 
   it('未命中的结果也进缓存，不会反复去打豆瓣', async () => {
     const { lookup, client } = makeLookup({ candidates: [] });
     expect((await lookup.lookup(query)).status).toBe('not_found');
     expect((await lookup.lookup(query)).status).toBe('not_found');
-    expect(client.search).toHaveBeenCalledTimes(1);
+    expect(client.suggest).toHaveBeenCalledTimes(1);
   });
 
   it('并发的相同查询只发一次请求', async () => {
     const { lookup, client } = makeLookup({ candidates: [matchingCandidate] });
     // 首页上同一部片子同时出现在多个榜单里，就是这个场景。
     const outcomes = await Promise.all([lookup.lookup(query), lookup.lookup(query), lookup.lookup(query)]);
-    expect(client.search).toHaveBeenCalledTimes(1);
+    expect(client.suggest).toHaveBeenCalledTimes(1);
     for (const outcome of outcomes) expect(outcome.status).toBe('ok');
   });
 });
@@ -263,7 +316,7 @@ describe('RatingLookup 未匹配', () => {
   it('空标题直接返回 not_found，不打扰豆瓣', async () => {
     const { lookup, client } = makeLookup();
     expect((await lookup.lookup({ title: '   ', type: 'unknown' })).status).toBe('not_found');
-    expect(client.search).not.toHaveBeenCalled();
+    expect(client.suggest).not.toHaveBeenCalled();
   });
 });
 
@@ -281,7 +334,7 @@ describe('RatingLookup 错误处理', () => {
 
     expect((await lookup.lookup(query)).status).toBe('error');
     expect((await lookup.lookup(query)).status).toBe('error');
-    expect(client.search).toHaveBeenCalledTimes(2);
+    expect(client.suggest).toHaveBeenCalledTimes(2);
   });
 
   it('取评分那一步失败时返回 error，而不是谎报 not_found', async () => {
@@ -299,8 +352,8 @@ describe('RatingLookup 错误处理', () => {
 
     await Promise.all([lookup.lookup(query), lookup.lookup(query)]);
     // 失败的 promise 若留在 inFlight 里，这一次会拿到上一次的失败结果。
-    const client2 = client as unknown as { search: ReturnType<typeof vi.fn> };
-    client2.search.mockResolvedValueOnce([matchingCandidate]);
+    const client2 = client as unknown as { suggest: ReturnType<typeof vi.fn> };
+    client2.suggest.mockResolvedValueOnce([matchingCandidate]);
     expect((await lookup.lookup(query)).status).toBe('ok');
   });
 });

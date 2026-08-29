@@ -42,9 +42,25 @@ function fakeResponse(
 }
 
 /** 搜索结果页，结构照线上真实响应。 */
-function searchPage(items: unknown[]): string {
-  return `<html><script>window.__DATA__ = ${JSON.stringify({ count: items.length, items })};</script></html>`;
+function searchPage(items: unknown[], errorInfo = ''): string {
+  return `<html><script>window.__DATA__ = ${JSON.stringify({
+    total: items.length, start: 0, count: 15, error_info: errorInfo, items,
+  })};</script></html>`;
 }
+
+/** suggest 的真实响应（照线上探测输出原样，url 带 ?suggest= 跟踪参数）。 */
+const SUGGEST_BODY = JSON.stringify([
+  {
+    episode: '',
+    img: 'https://img1.doubanio.com/view/photo/s_ratio_poster/public/p2512733819.jpg',
+    title: '星河战队',
+    url: 'https://movie.douban.com/subject/1295384/?suggest=Starship+Troopers',
+    type: 'movie',
+    year: '1997',
+    sub_title: 'Starship Troopers',
+    id: '1295384',
+  },
+]);
 
 const SEARCH_BODY = searchPage([
   {
@@ -57,12 +73,53 @@ const SEARCH_BODY = searchPage([
   },
 ]);
 
-describe('DoubanClient.search', () => {
+describe('DoubanClient.suggest（主检索）', () => {
+  it('解析真实的 suggest 响应，候选带年份和原名', async () => {
+    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => fakeResponse(SUGGEST_BODY));
+    const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    const candidates = await client.suggest('Starship Troopers');
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      id: '1295384',
+      title: '星河战队',
+      originalTitle: 'Starship Troopers',
+      year: 1997,
+      type: 'movie',
+      // suggest 不带评分，由上层用 fetchRating 补。
+      score: null,
+    });
+    expect(fetchImpl.mock.calls[0]![0]).toContain('movie.douban.com/j/subject_suggest');
+  });
+
+  it('返回空数组时原样返回（可能是真没有，也可能是它在限流，上层负责兜底）', async () => {
+    const fetchImpl = vi.fn(async () => fakeResponse('[]'));
+    const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(await client.suggest('不存在的片')).toEqual([]);
+  });
+
+  it('对查询词做 URL 编码且不携带 cookie', async () => {
+    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => fakeResponse('[]'));
+    const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await client.suggest('河边的错误');
+    expect(fetchImpl.mock.calls[0]![0]).toContain(encodeURIComponent('河边的错误'));
+    expect(fetchImpl.mock.calls[0]![1]).toMatchObject({ credentials: 'omit' });
+  });
+
+  it('返回的不是 JSON 时报错而不是崩溃', async () => {
+    const fetchImpl = vi.fn(async () => fakeResponse('<html>登录页</html>'));
+    const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
+    await expect(client.suggest('测试')).rejects.toThrow('非预期内容');
+  });
+});
+
+describe('DoubanClient.fullSearch（兜底检索）', () => {
   it('解析检索结果，评分直接带在候选里', async () => {
     const fetchImpl = vi.fn(async () => fakeResponse(SEARCH_BODY));
     const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    const candidates = await client.search('Starship Troopers');
+    const candidates = await client.fullSearch('Starship Troopers');
     expect(candidates).toHaveLength(1);
     expect(candidates[0]).toMatchObject({
       id: '1293544',
@@ -72,39 +129,36 @@ describe('DoubanClient.search', () => {
     });
   });
 
-  it('打的是完整搜索而不是已经废掉的 subject_suggest', async () => {
-    // 实测 subject_suggest 对任何查询词都返回空数组，连简体主标题都查不到。
-    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => fakeResponse(searchPage([])));
+  it('error_info 非空时按限流处理，绝不能当成"豆瓣没这部片"', async () => {
+    // 线上真实形态：HTTP 200、结构完好、items 为空、error_info 说了实话。
+    // 曾被当成有效空结果缓存成「未收录」，导致整页所有片子显示未收录。
+    const fetchImpl = vi.fn(async () => fakeResponse(searchPage([], '搜索访问太频繁。')));
     const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    await client.search('测试');
-    const url = String(fetchImpl.mock.calls[0]![0]);
-    expect(url).toContain('https://search.douban.com/movie/subject_search');
-    expect(url).not.toContain('subject_suggest');
+    await expect(client.fullSearch('Breaking Bad')).rejects.toBeInstanceOf(RateLimitedError);
   });
 
-  it('对查询词做 URL 编码', async () => {
-    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => fakeResponse(searchPage([])));
-    const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
+  it('软限流只静默本接口，静默期内不再发请求，suggest 不受牵连', async () => {
+    const queue = fastQueue();
+    const fetchImpl = vi
+      .fn<(url: string) => Promise<Response>>()
+      .mockResolvedValueOnce(fakeResponse(searchPage([], '搜索访问太频繁。')))
+      .mockResolvedValue(fakeResponse(SUGGEST_BODY));
+    const client = new DoubanClient(queue, { fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    await client.search('河边的错误');
-    expect(fetchImpl.mock.calls[0]![0]).toContain(encodeURIComponent('河边的错误'));
-  });
-
-  it('不携带 cookie，避免以用户身份访问豆瓣', async () => {
-    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => fakeResponse(searchPage([])));
-    const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
-
-    await client.search('测试');
-    expect(fetchImpl.mock.calls[0]![1]).toMatchObject({ credentials: 'omit' });
+    await expect(client.fullSearch('a')).rejects.toBeInstanceOf(RateLimitedError);
+    // 静默期内再调 fullSearch：直接抛错，不发请求。
+    await expect(client.fullSearch('b')).rejects.toThrow('静默期');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    // 全局队列没进退避，suggest 照常工作。
+    expect(queue.backoffUntil).toBeNull();
+    expect(await client.suggest('c')).toHaveLength(1);
   });
 
   it('页面里没有 __DATA__ 时报错而不是当成空结果', async () => {
-    // 当成空结果会被缓存为"豆瓣没这部片"，把一次改版误记成永久的未收录。
     const fetchImpl = vi.fn(async () => fakeResponse('<html>登录页</html>'));
     const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
-
-    await expect(client.search('测试')).rejects.toThrow('结构已变化');
+    await expect(client.fullSearch('测试')).rejects.toThrow('结构已变化');
   });
 });
 
@@ -114,7 +168,7 @@ describe('DoubanClient 风控识别', () => {
     const fetchImpl = vi.fn(async () => fakeResponse('', { status: 403 }));
     const client = new DoubanClient(queue, { fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    await expect(client.search('测试')).rejects.toBeInstanceOf(RateLimitedError);
+    await expect(client.suggest('测试')).rejects.toBeInstanceOf(RateLimitedError);
     expect(queue.backoffUntil).not.toBeNull();
   });
 
@@ -125,7 +179,7 @@ describe('DoubanClient 风控识别', () => {
     );
     const client = new DoubanClient(queue, { fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    await expect(client.search('测试')).rejects.toBeInstanceOf(RateLimitedError);
+    await expect(client.suggest('测试')).rejects.toBeInstanceOf(RateLimitedError);
     expect(queue.backoffUntil).toBe(120_000);
   });
 
@@ -137,7 +191,7 @@ describe('DoubanClient 风控识别', () => {
     );
     const client = new DoubanClient(queue, { fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    await expect(client.search('测试')).rejects.toBeInstanceOf(RateLimitedError);
+    await expect(client.suggest('测试')).rejects.toBeInstanceOf(RateLimitedError);
     expect(queue.backoffUntil).not.toBeNull();
   });
 
@@ -148,7 +202,7 @@ describe('DoubanClient 风控识别', () => {
     );
     const client = new DoubanClient(queue, { fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    await expect(client.search('测试')).rejects.toBeInstanceOf(RateLimitedError);
+    await expect(client.suggest('测试')).rejects.toBeInstanceOf(RateLimitedError);
   });
 
   it('退避到期后成功一次，退避步长会被重置', async () => {
@@ -158,9 +212,9 @@ describe('DoubanClient 风控识别', () => {
     queue.noteRateLimited();
     advance(2001);
 
-    const fetchImpl = vi.fn(async () => fakeResponse(searchPage([])));
+    const fetchImpl = vi.fn(async () => fakeResponse('[]'));
     const client = new DoubanClient(queue, { fetchImpl: fetchImpl as unknown as typeof fetch });
-    await client.search('测试');
+    await client.suggest('测试');
     expect(queue.backoffUntil).toBeNull();
 
     // 成功之后再被限流，应该从初始值重新算起，而不是继续翻倍。
@@ -173,7 +227,7 @@ describe('DoubanClient 风控识别', () => {
     const fetchImpl = vi.fn(async () => fakeResponse('', { status: 500 }));
     const client = new DoubanClient(queue, { fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    await expect(client.search('测试')).rejects.toThrow('HTTP 500');
+    await expect(client.suggest('测试')).rejects.toThrow('HTTP 500');
     expect(queue.backoffUntil).toBeNull();
   });
 });
@@ -244,6 +298,6 @@ describe('DoubanClient 超时', () => {
     });
     const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    await expect(client.search('测试')).rejects.toThrow('超时');
+    await expect(client.suggest('测试')).rejects.toThrow('超时');
   });
 });

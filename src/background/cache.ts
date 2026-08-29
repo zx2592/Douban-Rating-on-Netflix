@@ -25,8 +25,8 @@ export const NOT_FOUND_TTL_MS = 12 * 60 * 60 * 1000;
  * 失效必须自动发生，不能依赖人工操作。旧版本的键由 sweepLegacyEntries
  * 在启动时清除。
  */
-const KEY_PREFIX = 'r2:';
-const LEGACY_KEY_PATTERN = /^r:/;
+const KEY_PREFIX = 'r3:';
+const LEGACY_KEY_PATTERN = /^r\d*:/;
 const MAX_ENTRIES = 4000;
 /** 超出上限时一次清掉这么多比例的老条目，避免每写一条都要清理一次。 */
 const PRUNE_RATIO = 0.25;
