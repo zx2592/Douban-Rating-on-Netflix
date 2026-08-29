@@ -1,6 +1,6 @@
 {
   "name": "douban-ratings-for-netflix",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "在 Netflix 页面上就地显示豆瓣评分的 Chrome 扩展",
   "private": true,
   "type": "module",

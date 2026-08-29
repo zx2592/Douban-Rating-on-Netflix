@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "豆瓣评分 for Netflix",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "在 Netflix 的影片封面和详情页旁显示对应的豆瓣评分，点击可跳转豆瓣条目。",
   "minimum_chrome_version": "110",
   "permissions": ["storage"],
