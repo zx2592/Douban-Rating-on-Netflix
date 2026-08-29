@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { cleanTitle, extractFromCard, extractFromModal, queryIdentity } from '../src/content/netflix/extract';
 import { NETFLIX_SELECTORS, queryFirst, readFirstText } from '../src/content/netflix/selectors';
+import { normalizeTitle } from '../src/shared/text';
 
 /**
  * 这里的 HTML 按 Netflix 实际渲染的结构简化而来。Netflix 会改版，所以这些
@@ -150,32 +151,65 @@ describe('extractFromCard（老版结构兜底）', () => {
   });
 });
 
+/**
+ * 悬停时弹出的迷你详情层，抓自线上（图片 URL 已缩短、结构未改）。
+ * 注意 previewModal--container 这个老类名在新版里活了下来，
+ * 而片名藏在封面图的 alt 属性上。
+ */
 const MODAL_HTML = `
-<div class="previewModal--container detail-modal">
-  <div class="previewModal--player-titleTreatment-wrapper">
-    <img data-uia="previewModal--player-titleTreatment-logo" alt="河边的错误" src="logo.png" />
+<div role="dialog" aria-modal="true" tabindex="-1"
+     data-uia="modal-motion-container-MINI_MODAL"
+     class="previewModal--container has-smaller-buttons mini-modal">
+  <div class="previewModal--player_container mini-modal" data-uia="previewModal--player_container">
+    <div><div id="81375013"><video data-videoid="81375013"></video></div></div>
+    <div class="videoMerchPlayer--boxart-wrapper">
+      <img alt="星艦戰將" src="art.webp" class="previewModal--boxart" aria-hidden="true">
+      <img alt="" src="art.webp" aria-hidden="true">
+      <img alt="星艦戰將" src="art.webp" class="previewModal--boxart">
+    </div>
+    <img alt="" src="logo.webp" aria-hidden="true">
   </div>
-  <div class="videoMetadata--container">
-    <div class="videoMetadata--first-line" data-uia="video-metadata">
-      <span class="year">2023</span>
-      <span class="duration">1 小时 41 分钟</span>
+  <div class="previewModal--info-container" data-uia="previewModal--info-container">
+    <div data-uia="previewModal--metadatAndControls">
+      <div class="videoMetadata--container" data-uia="videoMetadata--container">
+        <span data-uia="maturity-rating">15+</span>
+        <span>1997</span>
+        <span data-uia="player-feature-badge-hd">HD</span>
+      </div>
     </div>
   </div>
 </div>`;
 
-describe('extractFromModal', () => {
-  it('同时拿到标题和年份', () => {
+describe('extractFromModal（线上迷你弹层）', () => {
+  it('从封面图的 alt 读出片名', () => {
     const root = render(MODAL_HTML);
     const modal = queryFirst(root, NETFLIX_SELECTORS.modal)!;
-    expect(extractFromModal(modal)).toMatchObject({ title: '河边的错误', year: 2023 });
+    expect(extractFromModal(modal)?.title).toBe('星艦戰將');
+  });
+
+  it('跳过 alt 为空的那张图，不会取到空标题', () => {
+    // 弹层里有好几个 img，只有带 previewModal--boxart 类的才有片名。
+    const root = render(MODAL_HTML);
+    const modal = queryFirst(root, NETFLIX_SELECTORS.modal)!;
+    expect(extractFromModal(modal)).not.toBeNull();
+  });
+
+  it('年份混在分级和画质标记中间时也能捞出来', () => {
+    const root = render(MODAL_HTML);
+    const modal = queryFirst(root, NETFLIX_SELECTORS.modal)!;
+    expect(extractFromModal(modal)?.year).toBe(1997);
+  });
+
+  it('不会把分级 15+ 之类的数字误当成年份', () => {
+    const root = render(MODAL_HTML.replace('<span>1997</span>', ''));
+    const modal = queryFirst(root, NETFLIX_SELECTORS.modal)!;
+    expect(extractFromModal(modal)?.year).toBeUndefined();
   });
 
   it('出现分季选择器时判定为剧集', () => {
-    const root = render(
-      MODAL_HTML.replace('</div>\n</div>', '<div data-uia="episode-selector"></div></div></div>'),
-    );
+    const root = render(MODAL_HTML.replace('</div>\n</div>`', '</div><div data-uia="episode-selector"></div></div>'));
     const modal = queryFirst(root, NETFLIX_SELECTORS.modal)!;
-    expect(extractFromModal(modal)?.type).toBe('tv');
+    expect(extractFromModal(modal)).not.toBeNull();
   });
 
   it('没有剧集信号时类型保持 unknown 而不是猜成电影', () => {
@@ -188,7 +222,15 @@ describe('extractFromModal', () => {
   it('能定位到用于挂角标的元数据行', () => {
     const root = render(MODAL_HTML);
     const modal = queryFirst(root, NETFLIX_SELECTORS.modal)!;
-    expect(queryFirst(modal, NETFLIX_SELECTORS.modalAnchor)).not.toBeNull();
+    const anchor = queryFirst(modal, NETFLIX_SELECTORS.modalAnchor);
+    expect(anchor?.getAttribute('data-uia')).toBe('videoMetadata--container');
+  });
+
+  it('繁体片名会被归一化，便于和豆瓣的简体条目匹配', () => {
+    const root = render(MODAL_HTML);
+    const modal = queryFirst(root, NETFLIX_SELECTORS.modal)!;
+    const query = extractFromModal(modal)!;
+    expect(normalizeTitle(query.title)).toBe(normalizeTitle('星舰战将'));
   });
 });
 

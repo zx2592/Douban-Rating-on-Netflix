@@ -71,12 +71,21 @@ export const NETFLIX_SELECTORS = {
   /**
    * 悬停 / 点击后弹出的详情层。
    *
-   * 新版的结构尚未确认（详情层要打开后才能取到 DOM），这里暂时只有老版的
-   * 选择器。取不到就只是详情层没有角标，不影响列表页。
+   * 和列表卡片不同，这里的 previewModal--container 类名在新版里活了下来
+   * （新版还额外带上 data-uia="modal-motion-container-MINI_MODAL"）。
+   * 悬停出的迷你弹层和点开后的完整详情层共用这个类名。
    */
-  modal: ['.previewModal--container', '[data-uia="previewModal--container"]', '.jawBoneContainer'],
+  modal: [
+    '.previewModal--container',
+    '[data-uia^="modal-motion-container"]',
+    '[data-uia="previewModal--container"]',
+    '.jawBoneContainer',
+  ],
 
   modalTitle: [
+    // 新版迷你弹层：片名在封面图的 alt 上。注意同一个弹层里有多个 img，
+    // 只有带 previewModal--boxart 类的那几个才有片名。
+    { selector: 'img.previewModal--boxart[alt]', attr: 'alt' },
     { selector: '[data-uia="previewModal--player-titleTreatment-logo"]', attr: 'alt' },
     { selector: '.previewModal--player-titleTreatment-logo img', attr: 'alt' },
     { selector: '[data-uia="previewModal--section-header"] strong', attr: null },
@@ -84,13 +93,27 @@ export const NETFLIX_SELECTORS = {
     { selector: '.title-title', attr: null },
   ] satisfies TextSource[],
 
-  /** 详情层里的年份。 */
-  modalYear: ['[data-uia="video-metadata"] .year', '.videoMetadata--first-line .year', '.year'],
+  /**
+   * 详情层里的年份。
+   *
+   * 最后一条是兜底：拿整个元数据容器的文本去正则四位年份。迷你弹层里
+   * 年份不一定有独立元素，混在分级、时长、画质标记中间。
+   */
+  modalYear: [
+    '[data-uia="video-metadata"] .year',
+    '.videoMetadata--first-line .year',
+    '.year',
+    '[data-uia="videoMetadata--container"]',
+    '.videoMetadata--container',
+  ],
 
   /** 详情层里角标的落点，挂在元数据行旁边。 */
   modalAnchor: [
+    '[data-uia="videoMetadata--container"]',
+    '.videoMetadata--container',
     '[data-uia="video-metadata"]',
     '.videoMetadata--first-line',
+    '[data-uia="previewModal--metadatAndControls"]',
     '.previewModal--detailsMetadata-left',
     '.previewModal--section-header',
   ],

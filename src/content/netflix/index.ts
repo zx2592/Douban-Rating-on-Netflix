@@ -102,8 +102,14 @@ async function processCard(card: HTMLElement): Promise<void> {
 
   const anchor = queryFirst(card, NETFLIX_SELECTORS.cardAnchor) ?? card;
   const identity = queryIdentity(query);
-  upsertBadge(anchor, { variant: 'card', position: settings.badgePosition, identity, state: { kind: 'loading' } });
 
+  // 列表卡片刻意不显示"查询中"的占位角标。
+  //
+  // 后台请求是串行限速的，视口里十几张卡片排队要花几十秒，期间每张封面上都
+  // 挂一个只有"豆"字、没有数字的角标，看起来像是坏了 —— 实际用户反馈就是
+  // 「出现了豆字，但不是评分」。改成结果回来才注入，没查到的卡片保持原样，
+  // 已查到的直接显示分数，中间态不占位。详情弹层是用户主动打开等结果的，
+  // 那里仍然显示查询中。
   const outcome = await sendRequest({ kind: 'lookup', query });
 
   // 请求往返期间 Netflix 可能已经把这个 DOM 节点复用给了另一部片子，
