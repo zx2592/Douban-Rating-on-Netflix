@@ -74,7 +74,13 @@ src/
 
 ## Netflix 改版了怎么办
 
-Netflix 是没有公开契约的商业站点，class 名会随改版变化。所有 DOM 知识都集中在 `src/content/netflix/selectors.ts`，每个位置都给了一组候选选择器并按顺序尝试，改版时通常只需要往对应数组里加一行。
+Netflix 是没有公开契约的商业站点。所有 DOM 知识都集中在 `src/content/netflix/selectors.ts`，每个位置都给了一组候选选择器并按顺序尝试，改版时只需要动这一个文件。
+
+**只认 `data-uia`，不碰 class。** Netflix 现在的 class 全是 CSS-in-JS 生成的哈希名（`default-ltr-iqcdef-cache-19c3xp8` 这种），每次构建都会变，依赖它们等于埋雷。`data-uia` 是 Netflix 自己的测试钩子，稳定得多。影片卡片是 `a[data-uia="standard-card"]`，标题在同一个元素的 `aria-label` 上。
+
+**卡片类型要逐个列举，不能用通配。** 同一批 `*-card` 里还混着 `cloud-game-card`（云游戏），拿游戏名去查豆瓣既查不到又白费请求配额，所以选择器里只写明确要的那几种。
+
+测试用的 fixture 是从线上直接抓下来的真实 HTML，不是照着记忆写的。这一点是有教训的：第一版的选择器凭记忆编写，单测全绿，线上却一张卡片都匹配不到 —— 适配器这类代码，fixture 的真实性比用例数量重要得多。
 
 内容脚本带了自检：打开页面 8 秒后若一张卡片都没找到，会在 Console 打出一条警告。想看详细日志，在 Netflix 页面的 Console 里执行 `localStorage.setItem('dbr:debug', '1')` 后刷新。
 

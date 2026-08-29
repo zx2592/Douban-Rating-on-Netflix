@@ -55,11 +55,30 @@ async function settle(ms = 400): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** 线上 netflix.com/browse 的真实卡片结构（图片 URL 已缩短）。 */
 const CARD_HTML = `
-<div class="title-card">
-  <a class="slider-refocus" aria-label="河边的错误" href="/watch/1">
-    <div class="boxart-container"><img class="boxart-image" alt="" src="a.jpg" /></div>
-  </a>
+<div data-virtual-slot="4" class="default-ltr-iqcdef-cache-1uo9crx">
+  <div><div class="default-ltr-iqcdef-cache-1tbetht">
+    <a href="/browse?jbv=81234567" tabindex="0" aria-label="河边的错误"
+       data-uia="standard-card" class="default-ltr-iqcdef-cache-19c3xp8">
+      <div class="default-ltr-iqcdef-cache-lbc">
+        <img src="art.webp" alt="" class="standard-card tracked-card">
+      </div>
+    </a>
+  </div></div>
+</div>`;
+
+/** 云游戏卡片：结构相同、data-uia 不同，绝不能当成影片去查豆瓣。 */
+const CLOUD_GAME_HTML = `
+<div data-virtual-slot="5" class="default-ltr-iqcdef-cache-1uo9crx">
+  <div><div class="default-ltr-iqcdef-cache-1tbetht">
+    <a href="/browse?jbv=82027565" tabindex="0" aria-label="Netflix Minigolf"
+       data-uia="cloud-game-card" class="default-ltr-iqcdef-cache-19c3xp8">
+      <div class="default-ltr-iqcdef-cache-lbc">
+        <img src="game.webp" alt="" class="cloud-game-card tracked-card">
+      </div>
+    </a>
+  </div></div>
 </div>`;
 
 function installChromeMock(): void {
@@ -135,14 +154,26 @@ describe('内容脚本整体链路', () => {
     expect(lookupRequests[0]).toMatchObject({ title: '河边的错误' });
   });
 
-  it('角标挂在封面容器里，而不是散落在页面上', async () => {
+  it('角标挂在紧贴封面图的那一层', async () => {
     document.body.innerHTML = CARD_HTML;
     await loadContentScript();
     scrollIntoView();
     await settle();
 
     const badge = document.querySelector('.dbr-badge');
-    expect(badge?.parentElement?.classList.contains('boxart-container')).toBe(true);
+    // 落点必须是直接包着封面图的容器，否则绝对定位会跑偏。
+    expect(badge?.parentElement?.querySelector(':scope > img')).not.toBeNull();
+  });
+
+  it('云游戏卡片不会触发任何豆瓣查询', async () => {
+    document.body.innerHTML = CLOUD_GAME_HTML;
+    await loadContentScript();
+    await settle(400);
+    scrollIntoView();
+    await settle();
+
+    expect(lookupRequests).toHaveLength(0);
+    expect(document.querySelector('.dbr-badge')).toBeNull();
   });
 
   it('后插入 DOM 的卡片也会被发现（Netflix 是动态渲染的）', async () => {
@@ -195,7 +226,7 @@ describe('内容脚本整体链路', () => {
     expect(lookupRequests).toHaveLength(1);
 
     // Netflix 的横向列表会回收 DOM 节点给下一部片子用。
-    document.querySelector('a.slider-refocus')!.setAttribute('aria-label', '鱿鱼游戏');
+    document.querySelector('[data-uia="standard-card"]')!.setAttribute('aria-label', '鱿鱼游戏');
     await settle(400);
     scrollIntoView();
     await settle();
