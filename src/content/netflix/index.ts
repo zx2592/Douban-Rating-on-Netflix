@@ -36,6 +36,16 @@ function debug(...args: unknown[]): void {
   if (DEBUG) console.log('[豆瓣评分]', ...args);
 }
 
+/**
+ * 脚本一加载就在 <html> 上打个标记。
+ *
+ * 排查「页面上什么都没出现」时，第一个要区分的就是「脚本压根没注入」还是
+ * 「注入了但没找到卡片」。没有这个标记，这两种情况从页面 Console 里看起来
+ * 一模一样。放在模块顶层而不是 start() 里，这样即使后续初始化抛异常，
+ * 标记依然在。
+ */
+document.documentElement.setAttribute('data-dbr-loaded', '1');
+
 let settings: Settings = DEFAULT_SETTINGS;
 let scanTimer: ReturnType<typeof setTimeout> | null = null;
 let sawAnyCard = false;
@@ -185,7 +195,14 @@ function removeAllBadges(): void {
 }
 
 async function start(): Promise<void> {
-  settings = await loadSettings();
+  try {
+    settings = await loadSettings();
+  } catch (error) {
+    // 读设置失败不该让整个扩展失效，用默认设置继续。这里如果直接抛出去，
+    // 观察器就装不上了，页面上会一片空白且 Console 里什么都看不到。
+    console.warn('[豆瓣评分] 读取设置失败，改用默认设置', error);
+    settings = DEFAULT_SETTINGS;
+  }
 
   onSettingsChanged((next) => {
     const wasEnabled = settings.enabled;
@@ -219,4 +236,8 @@ async function start(): Promise<void> {
   }, SELECTOR_HEALTHCHECK_MS);
 }
 
-void start();
+void start().catch((error: unknown) => {
+  // 兜住初始化阶段的任何意外，至少让问题在 Console 里留下痕迹，
+  // 而不是安静地什么都不做。
+  console.error('[豆瓣评分] 初始化失败', error);
+});
