@@ -52,12 +52,18 @@ export class RatingLookup {
         return { status: 'not_found' };
       }
 
-      const detail = await this.client.fetchRating(best.candidate.id);
+      // 搜索结果里通常已经带着评分，此时不必再单独请求一次 —— 请求数减半，
+      // 出分速度直接翻倍，对限流也更友好。只有搜索结果没给分时才回退。
+      const detail =
+        best.candidate.score !== null
+          ? { score: best.candidate.score, votes: best.candidate.votes }
+          : await this.client.fetchRating(best.candidate.id);
+
       const rating: DoubanRating = {
         id: best.candidate.id,
         title: best.candidate.title,
         score: detail.score,
-        votes: detail.votes,
+        votes: detail.votes ?? best.candidate.votes,
         year: best.candidate.year,
         type: best.candidate.type,
         url: best.candidate.url,

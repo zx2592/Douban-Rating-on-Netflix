@@ -35,45 +35,56 @@ function fakeResponse(
   return {
     status,
     ok: status >= 200 && status < 300,
-    url: init.url ?? 'https://movie.douban.com/j/subject_suggest',
+    url: init.url ?? 'https://search.douban.com/movie/subject_search',
     headers: new Headers(init.headers ?? {}),
     text: async () => body,
   } as unknown as Response;
 }
 
-const SUGGEST_BODY = JSON.stringify([
+/** 搜索结果页，结构照线上真实响应。 */
+function searchPage(items: unknown[]): string {
+  return `<html><script>window.__DATA__ = ${JSON.stringify({ count: items.length, items })};</script></html>`;
+}
+
+const SEARCH_BODY = searchPage([
   {
-    id: '35131346',
-    title: '河边的错误',
-    sub_title: 'Only the River Flows',
-    type: 'movie',
-    year: '2023',
-    episode: '',
-    url: 'https://movie.douban.com/subject/35131346/',
+    id: 1293544,
+    title: '星河战队 Starship Troopers',
+    abstract: '美国 / 动作 / 科幻 / 星舰战将(台) / 129分钟',
+    labels: [{ text: '电影' }],
+    rating: { count: 172000, value: 7.9 },
+    url: 'https://movie.douban.com/subject/1293544/',
   },
 ]);
 
 describe('DoubanClient.search', () => {
-  it('解析检索结果', async () => {
-    const fetchImpl = vi.fn(async () => fakeResponse(SUGGEST_BODY));
+  it('解析检索结果，评分直接带在候选里', async () => {
+    const fetchImpl = vi.fn(async () => fakeResponse(SEARCH_BODY));
     const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    const candidates = await client.search('河边的错误');
+    const candidates = await client.search('Starship Troopers');
     expect(candidates).toHaveLength(1);
-    expect(candidates[0]?.id).toBe('35131346');
+    expect(candidates[0]).toMatchObject({
+      id: '1293544',
+      title: '星河战队',
+      originalTitle: 'Starship Troopers',
+      score: 7.9,
+    });
   });
 
-  it('打的是 movie 子域', async () => {
-    // www.douban.com 下的同名接口已被豆瓣下掉（404），换错域名会整条链路失效。
-    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => fakeResponse('[]'));
+  it('打的是完整搜索而不是已经废掉的 subject_suggest', async () => {
+    // 实测 subject_suggest 对任何查询词都返回空数组，连简体主标题都查不到。
+    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => fakeResponse(searchPage([])));
     const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
 
     await client.search('测试');
-    expect(fetchImpl.mock.calls[0]![0]).toContain('https://movie.douban.com/j/subject_suggest');
+    const url = String(fetchImpl.mock.calls[0]![0]);
+    expect(url).toContain('https://search.douban.com/movie/subject_search');
+    expect(url).not.toContain('subject_suggest');
   });
 
   it('对查询词做 URL 编码', async () => {
-    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => fakeResponse('[]'));
+    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => fakeResponse(searchPage([])));
     const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
 
     await client.search('河边的错误');
@@ -81,18 +92,19 @@ describe('DoubanClient.search', () => {
   });
 
   it('不携带 cookie，避免以用户身份访问豆瓣', async () => {
-    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => fakeResponse('[]'));
+    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => fakeResponse(searchPage([])));
     const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
 
     await client.search('测试');
     expect(fetchImpl.mock.calls[0]![1]).toMatchObject({ credentials: 'omit' });
   });
 
-  it('返回的不是 JSON 时报错而不是崩溃', async () => {
+  it('页面里没有 __DATA__ 时报错而不是当成空结果', async () => {
+    // 当成空结果会被缓存为"豆瓣没这部片"，把一次改版误记成永久的未收录。
     const fetchImpl = vi.fn(async () => fakeResponse('<html>登录页</html>'));
     const client = new DoubanClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    await expect(client.search('测试')).rejects.toThrow('非预期内容');
+    await expect(client.search('测试')).rejects.toThrow('结构已变化');
   });
 });
 
@@ -146,7 +158,7 @@ describe('DoubanClient 风控识别', () => {
     queue.noteRateLimited();
     advance(2001);
 
-    const fetchImpl = vi.fn(async () => fakeResponse('[]'));
+    const fetchImpl = vi.fn(async () => fakeResponse(searchPage([])));
     const client = new DoubanClient(queue, { fetchImpl: fetchImpl as unknown as typeof fetch });
     await client.search('测试');
     expect(queue.backoffUntil).toBeNull();

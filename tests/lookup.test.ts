@@ -164,6 +164,64 @@ describe('RatingLookup 正常路径', () => {
   });
 });
 
+describe('RatingLookup 三种输入都要能命中同一部片', () => {
+  /** 线上搜索结果的形状：中英合并的标题、abstract 里带港台译名、评分内联。 */
+  const starship: Candidate = {
+    id: '1293544',
+    title: '星河战队',
+    originalTitle: 'Starship Troopers',
+    aliases: ['星舰战将', '太空战士'],
+    year: 1997,
+    type: 'movie',
+    score: 7.9,
+    votes: 172000,
+    url: 'https://movie.douban.com/subject/1293544/',
+  };
+
+  it.each([
+    ['英文原名（英文界面）', 'Starship Troopers'],
+    ['简体大陆译名', '星河战队'],
+    ['繁体台湾译名', '星艦戰將'],
+  ])('%s → 命中同一条目', async (_label, title) => {
+    // 列表卡片上拿不到年份，走的是收紧后的阈值，能过说明匹配是干净的。
+    const { lookup } = makeLookup({ candidates: [starship] });
+    const outcome = await lookup.lookup({ title, type: 'unknown' });
+
+    expect(outcome.status).toBe('ok');
+    if (outcome.status === 'ok') {
+      expect(outcome.rating.id).toBe('1293544');
+      expect(outcome.rating.score).toBe(7.9);
+    }
+  });
+
+  it('搜索结果自带评分时不再单独取一次分', async () => {
+    // 请求数减半，出分速度直接翻倍，对限流也更友好。
+    const { lookup, client } = makeLookup({ candidates: [starship] });
+    await lookup.lookup({ title: 'Starship Troopers', type: 'unknown' });
+
+    expect(client.search).toHaveBeenCalledTimes(1);
+    expect(client.fetchRating).not.toHaveBeenCalled();
+  });
+
+  it('搜索结果没给分时才回退到单独取分', async () => {
+    const { lookup, client } = makeLookup({
+      candidates: [{ ...starship, score: null }],
+      detail: { score: 7.9, votes: null },
+    });
+    const outcome = await lookup.lookup({ title: 'Starship Troopers', type: 'unknown' });
+
+    expect(client.fetchRating).toHaveBeenCalledWith('1293544');
+    if (outcome.status === 'ok') expect(outcome.rating.score).toBe(7.9);
+  });
+
+  it('评价人数会一并带出来', async () => {
+    // 换到完整搜索之后重新拿得到评价人数，tooltip 里能显示了。
+    const { lookup } = makeLookup({ candidates: [starship] });
+    const outcome = await lookup.lookup({ title: 'Starship Troopers', type: 'unknown' });
+    if (outcome.status === 'ok') expect(outcome.rating.votes).toBe(172000);
+  });
+});
+
 describe('RatingLookup 缓存', () => {
   it('第二次查询直接命中缓存，不再请求豆瓣', async () => {
     const { lookup, client } = makeLookup({ candidates: [matchingCandidate] });

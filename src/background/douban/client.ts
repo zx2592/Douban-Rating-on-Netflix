@@ -1,12 +1,16 @@
 import type { Candidate } from '../matcher';
 import { RateLimitedError, type RequestQueue } from '../queue';
-import { parseSubjectAbstract, parseSuggest, type RatingDetail } from './parse';
+import { parseSubjectAbstract, type RatingDetail } from './parse';
+import { extractEmbeddedData, parseSearchResults } from './search';
 
 /**
- * 检索接口。原先在 www.douban.com 下，豆瓣已把它下掉（返回 404），
- * 同名接口现在挂在 movie 子域上，参数结构没变。
+ * 检索接口。
+ *
+ * 用完整搜索而不是 subject_suggest：实测后者已经废了，对任何查询词都返回
+ * 空数组，连简体主标题都查不到。完整搜索则对英文、简体、繁体台译三种输入
+ * 都能命中，因为它会检索条目的「又名」。
  */
-const SUGGEST_URL = 'https://movie.douban.com/j/subject_suggest';
+const SEARCH_URL = 'https://search.douban.com/movie/subject_search';
 const ABSTRACT_URL = 'https://movie.douban.com/j/subject_abstract';
 
 const REQUEST_TIMEOUT_MS = 8000;
@@ -46,10 +50,16 @@ export class DoubanClient {
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
-  /** 按标题检索候选条目。返回的候选不含评分。 */
+  /**
+   * 按标题检索候选条目。
+   *
+   * 返回的候选通常已经带上评分（搜索结果页里就有），命中后不必再单独取一次分。
+   */
   async search(title: string): Promise<Candidate[]> {
-    const url = `${SUGGEST_URL}?q=${encodeURIComponent(title)}`;
-    return parseSuggest(this.parseJson(await this.request(url), '豆瓣检索接口'));
+    const url = `${SEARCH_URL}?cat=1002&search_text=${encodeURIComponent(title)}`;
+    const data = extractEmbeddedData(await this.request(url, 'text/html'));
+    if (data === null) throw new Error('豆瓣搜索页的结构已变化');
+    return parseSearchResults(data);
   }
 
   /**
@@ -61,7 +71,7 @@ export class DoubanClient {
    */
   async fetchRating(id: string): Promise<RatingDetail> {
     const url = `${ABSTRACT_URL}?subject_id=${encodeURIComponent(id)}`;
-    const payload = this.parseJson(await this.request(url), '豆瓣评分接口');
+    const payload = this.parseJson(await this.request(url, 'application/json'), '豆瓣评分接口');
     const detail = parseSubjectAbstract(payload);
     if (!detail) throw new Error('豆瓣评分接口的返回结构已变化');
     return detail;
@@ -76,7 +86,7 @@ export class DoubanClient {
     }
   }
 
-  private request(url: string): Promise<string> {
+  private request(url: string, accept: string): Promise<string> {
     return this.queue.enqueue(async () => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -85,7 +95,7 @@ export class DoubanClient {
           credentials: 'omit',
           redirect: 'follow',
           signal: controller.signal,
-          headers: { Accept: 'application/json' },
+          headers: { Accept: accept },
         });
 
         if (response.status === 403 || response.status === 429) {
