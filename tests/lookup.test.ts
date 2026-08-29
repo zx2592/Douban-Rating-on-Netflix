@@ -85,6 +85,74 @@ describe('RatingLookup 正常路径', () => {
     expect(client.search).toHaveBeenCalledWith('怪奇物语');
   });
 
+  it('Netflix 界面为英文时，靠豆瓣的英文原名匹配上中文条目', async () => {
+    // 这是把 Netflix 语言设成英文后的主路径：查询词是英文，豆瓣条目主标题
+    // 是中文译名，两者靠 sub_title（原名）对上。
+    const { lookup, client } = makeLookup({
+      candidates: [
+        {
+          id: '1291841',
+          title: '星河战队',
+          originalTitle: 'Starship Troopers',
+          year: 1997,
+          type: 'movie',
+          score: null,
+          votes: null,
+          url: 'https://movie.douban.com/subject/1291841/',
+        },
+      ],
+    });
+
+    const outcome = await lookup.lookup({ title: 'Starship Troopers', year: 1997, type: 'unknown' });
+    expect(outcome.status).toBe('ok');
+    if (outcome.status === 'ok') expect(outcome.rating.title).toBe('星河战队');
+    // 英文查询只发一次检索请求，不需要再试别的写法。
+    expect(client.search).toHaveBeenCalledTimes(1);
+    expect(client.search).toHaveBeenCalledWith('Starship Troopers');
+  });
+
+  it('繁体片名先用简体去搜', async () => {
+    const { lookup, client } = makeLookup({
+      candidates: [
+        {
+          id: '35088562',
+          title: '鱿鱼游戏',
+          year: 2021,
+          type: 'tv',
+          score: null,
+          votes: null,
+          url: 'https://movie.douban.com/subject/35088562/',
+        },
+      ],
+    });
+
+    const outcome = await lookup.lookup({ title: '魷魚遊戲', year: 2021, type: 'tv' });
+    expect(outcome.status).toBe('ok');
+    expect(client.search).toHaveBeenCalledWith('鱿鱼游戏');
+  });
+
+  it('第一个检索词没命中时会换下一个再试', async () => {
+    const client = fakeClient();
+    (client.search as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: '1',
+          title: '魷魚遊戲',
+          year: 2021,
+          type: 'tv',
+          score: null,
+          votes: null,
+          url: 'https://movie.douban.com/subject/1/',
+        },
+      ]);
+    const lookup = new RatingLookup(new RatingCache(memoryStorage()), client);
+
+    const outcome = await lookup.lookup({ title: '魷魚遊戲', year: 2021, type: 'tv' });
+    expect(outcome.status).toBe('ok');
+    expect(client.search).toHaveBeenCalledTimes(2);
+  });
+
   it('豆瓣尚未出分时返回 ok 且 score 为 null', async () => {
     const { lookup } = makeLookup({
       candidates: [matchingCandidate],

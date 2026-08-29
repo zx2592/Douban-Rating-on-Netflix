@@ -2,7 +2,7 @@ import { cacheKey, type RatingCache } from './cache';
 import type { DoubanClient } from './douban/client';
 import { pickBestMatch } from './matcher';
 import { RateLimitedError } from './queue';
-import { splitSeason } from '../shared/text';
+import { buildSearchTerms } from './search-terms';
 import type { DoubanRating, LookupOutcome, MediaQuery } from '../shared/types';
 
 /**
@@ -39,12 +39,14 @@ export class RatingLookup {
 
   private async resolve(query: MediaQuery, key: string): Promise<LookupOutcome> {
     try {
-      // 用去掉季数后缀的主标题去搜，召回更广；具体是哪一季交给匹配器判断，
-      // 因为豆瓣的候选标题里本来就带着 "第二季" 这样的后缀。
-      const searchTerm = splitSeason(query.title).base || query.title;
-      const candidates = await this.client.search(searchTerm);
-
-      const best = pickBestMatch(query, candidates);
+      // 依次尝试各个检索词，命中即止。用去掉季数后缀的主标题去搜，召回更广；
+      // 具体是哪一季交给匹配器判断，因为豆瓣的候选标题里本来就带着
+      // "第二季" 这样的后缀。
+      let best = null;
+      for (const term of buildSearchTerms(query.title)) {
+        best = pickBestMatch(query, await this.client.search(term));
+        if (best) break;
+      }
       if (!best) {
         this.cache.set(key, null);
         return { status: 'not_found' };
