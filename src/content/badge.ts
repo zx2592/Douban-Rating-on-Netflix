@@ -75,6 +75,21 @@ export function removeBadge(root: HTMLElement): void {
   for (const badge of findBadges(root)) badge.remove();
 }
 
+/**
+ * 把角标标记为「不要翻译」。
+ *
+ * 页面翻译类扩展（沉浸式翻译、Google 翻译等）会遍历文本节点做翻译，我们的
+ * 「豆」字也在其列 —— 实测沉浸式翻译会把它译成「豆子」，并把译文包在 <font>
+ * 里直接插进角标内部，渲染出来就是「豆 豆子 8.4」。
+ *
+ * translate="no" 是 HTML 标准属性且会被后代继承，notranslate 是 Google 翻译
+ * 沿用至今的约定，两者一起用覆盖面最广。CSS 里还有一层兜底，见 badge.css。
+ */
+function markUntranslatable(badge: HTMLElement): void {
+  badge.setAttribute('translate', 'no');
+  badge.setAttribute('lang', 'zh-Hans');
+}
+
 /** 角标内部结构：一个「豆」字，后面跟评分。 */
 function buildContent(badge: HTMLElement): void {
   const logo = document.createElement('span');
@@ -105,6 +120,7 @@ export function upsertBadge(anchor: HTMLElement, options: BadgeOptions, scope?: 
     badge = document.createElement('div');
     anchor.append(badge);
   }
+  markUntranslatable(badge);
   buildContent(badge);
 
   if (variant === 'card') {
@@ -114,7 +130,9 @@ export function upsertBadge(anchor: HTMLElement, options: BadgeOptions, scope?: 
   }
 
   badge.setAttribute(IDENTITY_ATTR, identity);
-  badge.className = `${BADGE_CLASS} dbr-${variant} dbr-pos-${position} dbr-state-${state.kind}`;
+  // notranslate 要写进 className：这行会整体重置 class，漏掉它翻译扩展就会
+  // 把「豆」译成「豆子」插进来。
+  badge.className = `${BADGE_CLASS} notranslate dbr-${variant} dbr-pos-${position} dbr-state-${state.kind}`;
   badge.title = describe(state);
 
   const value = badge.querySelector<HTMLElement>('.dbr-value');

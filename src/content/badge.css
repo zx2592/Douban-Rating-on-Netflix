@@ -42,6 +42,21 @@
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * 翻译扩展的兜底防线。
+ *
+ * 页面翻译类扩展会把译文包在自己的元素里插进原文所在的节点。实测沉浸式翻译
+ * 把「豆」译成「豆子」并插进 .dbr-logo，渲染成「豆 豆子 8.4」。已经用
+ * translate="no" + notranslate 声明过不要翻译，这里再兜一层：角标内部只允许
+ * 出现自己的两个 span，任何外来元素一律隐藏 —— 不依赖对方用什么标签名，
+ * 也不影响页面其余部分的翻译。
+ */
+.dbr-badge > *:not(.dbr-logo):not(.dbr-value),
+.dbr-badge .dbr-logo > *,
+.dbr-badge .dbr-value > * {
+  display: none !important;
+}
+
 /* 分数分档配色 */
 .dbr-tier-high .dbr-value { color: #7ddc8b !important; }
 .dbr-tier-mid  .dbr-value { color: #ffd479 !important; }

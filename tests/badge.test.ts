@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { BADGE_CLASS, removeBadge, upsertBadge } from '../src/content/badge';
 
 function anchorFixture(): HTMLElement {
@@ -249,5 +250,56 @@ describe('跨挂载点去重', () => {
 
     removeBadge(card);
     expect(card.querySelectorAll(`.${BADGE_CLASS}`)).toHaveLength(0);
+  });
+});
+
+describe('抵御页面翻译扩展', () => {
+  it('角标声明为不可翻译', () => {
+    // 沉浸式翻译等扩展会遍历文本节点，把「豆」译成「豆子」并把译文插进
+    // .dbr-logo 内部，渲染成「豆 豆子 8.4」。translate="no" 是标准属性且
+    // 会被后代继承，notranslate 是 Google 翻译沿用的约定，两者都要有。
+    const anchor = anchorFixture();
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
+
+    const badge = badgeIn(anchor)!;
+    expect(badge.getAttribute('translate')).toBe('no');
+    expect(badge.classList.contains('notranslate')).toBe(true);
+  });
+
+  it('状态更新重置 class 之后，notranslate 依然在', () => {
+    // className 是整体赋值的，漏掉 notranslate 就等于每次更新都把防护摘掉。
+    const anchor = anchorFixture();
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: { kind: 'loading' } });
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
+
+    const badge = badgeIn(anchor)!;
+    expect(badge.classList.contains('notranslate')).toBe(true);
+    expect(badge.getAttribute('translate')).toBe('no');
+  });
+
+  it('已经被注入译文的角标，下一次更新会清理干净', () => {
+    const anchor = anchorFixture();
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: RATED });
+
+    // 照线上 dump 复现沉浸式翻译的注入形态：译文包在 <font> 里塞进 .dbr-logo。
+    const logo = badgeIn(anchor)!.querySelector('.dbr-logo')!;
+    const injected = document.createElement('font');
+    injected.className = 'notranslate immersive-translate-target-wrapper';
+    injected.innerHTML = '<font>&nbsp;&nbsp;</font><font>豆子</font>';
+    logo.append(injected);
+    expect(badgeIn(anchor)!.textContent).toContain('豆子');
+
+    // buildContent 每次整体重建，注入物随之消失。
+    upsertBadge(anchor, { variant: 'card', position: 'top-left', identity: 'a', state: { ...RATED, score: 9.1 } });
+    expect(badgeIn(anchor)!.textContent).toBe('豆9.1');
+    expect(badgeIn(anchor)!.querySelector('font')).toBeNull();
+  });
+
+  it('CSS 兜底规则覆盖角标内的任何外来元素', () => {
+    // 不依赖对方用什么标签名：角标内部只允许自己的两个 span。
+    const css = readFileSync('src/content/badge.css', 'utf8');
+    expect(css).toContain('.dbr-badge > *:not(.dbr-logo):not(.dbr-value)');
+    expect(css).toContain('.dbr-badge .dbr-logo > *');
+    expect(css).toContain('.dbr-badge .dbr-value > *');
   });
 });

@@ -98,6 +98,12 @@ Netflix 是没有公开契约的商业站点。所有 DOM 知识都集中在 `sr
 
 **先确认跑的是哪一版。** `npm run build` 会打印一个版本戳，内容脚本把同一个戳写在 `<html data-dbr-loaded>` 上。在 Netflix 页面 Console 里执行 `document.documentElement.dataset.dbrLoaded`，两者一致才说明新代码真的生效了。加这个是因为排查时反复踩同一个坑：`git pull` 不会自动重建，重建后还要去 `chrome://extensions` 点刷新，三步缺一不可 —— 而少做一步和「代码有 bug」在表现上完全一样，为此白白多绕了几轮。
 
+## 和其它扩展共存
+
+角标声明了 `translate="no"` 和 `notranslate`，CSS 里还有一条兜底规则把角标内部的任何外来元素隐藏掉。这不是过度设计：实测「沉浸式翻译」会把角标里的「豆」字当成待翻译文本，译成「豆子」再把译文包在 `<font>` 里插进角标内部，渲染出来就是「豆 豆子 8.4」。
+
+这类问题在本地开发时完全看不到 —— 开发环境没装那些扩展。用户报告显示异常时，让他们把 `document.querySelectorAll('.dbr-badge')` 的 `outerHTML` 贴回来，比任何猜测都快：这次就是靠这份 dump 一眼看到了 `immersive-translate-target-wrapper`，而在那之前已经沿着「重复角标」的错误方向修了两轮。
+
 ## 隐私
 
 扩展只做两件涉及网络的事：把影片标题发给豆瓣做检索、取回评分。没有任何数据上报到第三方，评分缓存只存在浏览器本地的 `chrome.storage.local` 里。
