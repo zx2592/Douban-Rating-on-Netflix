@@ -16,19 +16,37 @@ export interface StatusRequest {
   kind: 'status';
 }
 
-export type ExtensionRequest = LookupRequest | ClearCacheRequest | StatusRequest;
+/**
+ * 内容脚本 → background：用户点开了这部片。
+ *
+ * 点击是最强的兴趣信号，background 据此把这部片的查询提到高优先级，
+ * 并允许它绕过一次早先写下的「未收录」缓存。
+ */
+export interface InterestRequest {
+  kind: 'interest';
+  query: MediaQuery;
+}
+
+export type ExtensionRequest =
+  | LookupRequest
+  | ClearCacheRequest
+  | StatusRequest
+  | InterestRequest;
 
 export interface StatusResponse {
   cachedEntries: number;
   /** 若正处于退避期，给出恢复时间戳（epoch ms）。 */
   backoffUntil: number | null;
   pendingRequests: number;
+  /** 已记录的「感兴趣」影片数。 */
+  interestEntries: number;
 }
 
 export type ExtensionResponse =
   | { kind: 'lookup'; outcome: LookupOutcome }
   | { kind: 'clearCache'; cleared: number }
-  | { kind: 'status'; status: StatusResponse };
+  | { kind: 'status'; status: StatusResponse }
+  | { kind: 'interest'; recorded: boolean };
 
 /**
  * 从内容脚本或 popup 发起一次请求。
@@ -40,6 +58,7 @@ export type ExtensionResponse =
 export async function sendRequest(request: LookupRequest): Promise<LookupOutcome>;
 export async function sendRequest(request: ClearCacheRequest): Promise<number>;
 export async function sendRequest(request: StatusRequest): Promise<StatusResponse>;
+export async function sendRequest(request: InterestRequest): Promise<boolean>;
 export async function sendRequest(request: ExtensionRequest): Promise<unknown> {
   try {
     const response = (await chrome.runtime.sendMessage(request)) as ExtensionResponse | undefined;
@@ -51,11 +70,19 @@ export async function sendRequest(request: ExtensionRequest): Promise<unknown> {
         return response.cleared;
       case 'status':
         return response.status;
+      case 'interest':
+        return response.recorded;
     }
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     if (request.kind === 'lookup') {
       return { status: 'error', reason } satisfies LookupOutcome;
+    }
+    // 记录兴趣只是一个锦上添花的信号，background 不在时静默失败即可，
+    // 不值得让内容脚本因此抛错。
+    if (request.kind === 'interest') {
+      console.warn('[豆瓣评分] 记录兴趣失败', reason);
+      return false;
     }
     throw error;
   }

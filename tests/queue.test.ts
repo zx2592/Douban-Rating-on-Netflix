@@ -263,3 +263,68 @@ describe('退避跨 service worker 重启存活', () => {
     expect(queue.backoffUntil).toBe(16_000);
   });
 });
+
+describe('RequestQueue 优先级', () => {
+  /** 只排队不执行的队列：任务全部堆在队里，方便观察出队顺序。 */
+  function pausedQueue() {
+    const clock = virtualClock();
+    const queue = new RequestQueue({
+      minIntervalMs: 1000,
+      jitterMs: 0,
+      random: () => 0,
+      now: clock.now,
+      sleep: clock.sleep,
+    });
+    return queue;
+  }
+
+  it('高优先级插到普通任务前面', async () => {
+    const queue = pausedQueue();
+    const order: string[] = [];
+    const task = (name: string) => async () => {
+      order.push(name);
+    };
+
+    const all = [
+      queue.enqueue(task('n1')),
+      queue.enqueue(task('n2')),
+      queue.enqueue(task('n3')),
+      queue.enqueue(task('h1'), 'high'),
+    ];
+    await Promise.all(all);
+
+    // n1 已经被 drain 取走开跑了，插队只能影响还在队里的 n2/n3。
+    expect(order).toEqual(['n1', 'h1', 'n2', 'n3']);
+  });
+
+  it('同为高优先级时保持先来先服务', async () => {
+    const queue = pausedQueue();
+    const order: string[] = [];
+    const task = (name: string) => async () => {
+      order.push(name);
+    };
+
+    const all = [
+      queue.enqueue(task('n1')),
+      queue.enqueue(task('n2')),
+      queue.enqueue(task('h1'), 'high'),
+      queue.enqueue(task('h2'), 'high'),
+      queue.enqueue(task('h3'), 'high'),
+    ];
+    await Promise.all(all);
+
+    // 连点几部片时，若高优先级之间也互相插队，先点的那部反而最后出分。
+    expect(order).toEqual(['n1', 'h1', 'h2', 'h3', 'n2']);
+  });
+
+  it('不传优先级时按普通处理，顺序不变', async () => {
+    const queue = pausedQueue();
+    const order: string[] = [];
+    const task = (name: string) => async () => {
+      order.push(name);
+    };
+
+    await Promise.all([queue.enqueue(task('a')), queue.enqueue(task('b')), queue.enqueue(task('c'))]);
+    expect(order).toEqual(['a', 'b', 'c']);
+  });
+});

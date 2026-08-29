@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { RatingCache, type StorageArea } from '../src/background/cache';
 import type { DoubanClient } from '../src/background/douban/client';
 import type { RatingDetail } from '../src/background/douban/parse';
+import { InterestStore } from '../src/background/interest';
 import { RatingLookup } from '../src/background/lookup';
 import type { Candidate } from '../src/background/matcher';
 import { RateLimitedError } from '../src/background/queue';
@@ -84,14 +85,14 @@ describe('RatingLookup 正常路径', () => {
       status: 'ok',
       rating: { id: '35131346', title: '河边的错误', score: 7.4, votes: 1000 },
     });
-    expect(client.suggest).toHaveBeenCalledWith('河边的错误');
-    expect(client.fetchRating).toHaveBeenCalledWith('35131346');
+    expect(client.suggest).toHaveBeenCalledWith('河边的错误', 'normal');
+    expect(client.fetchRating).toHaveBeenCalledWith('35131346', 'normal');
   });
 
   it('搜索时用去掉季数后缀的主标题', async () => {
     const { lookup, client } = makeLookup({ candidates: [] });
     await lookup.lookup({ title: '怪奇物语 第四季', type: 'tv' });
-    expect(client.suggest).toHaveBeenCalledWith('怪奇物语');
+    expect(client.suggest).toHaveBeenCalledWith('怪奇物语', 'normal');
   });
 
   it('Netflix 界面为英文时，靠豆瓣的英文原名匹配上中文条目', async () => {
@@ -117,7 +118,7 @@ describe('RatingLookup 正常路径', () => {
     if (outcome.status === 'ok') expect(outcome.rating.title).toBe('星河战队');
     // 英文查询只发一次检索请求，不需要再试别的写法。
     expect(client.suggest).toHaveBeenCalledTimes(1);
-    expect(client.suggest).toHaveBeenCalledWith('Starship Troopers');
+    expect(client.suggest).toHaveBeenCalledWith('Starship Troopers', 'normal');
   });
 
   it('繁体片名先用简体去搜', async () => {
@@ -137,7 +138,7 @@ describe('RatingLookup 正常路径', () => {
 
     const outcome = await lookup.lookup({ title: '魷魚遊戲', year: 2021, type: 'tv' });
     expect(outcome.status).toBe('ok');
-    expect(client.suggest).toHaveBeenCalledWith('鱿鱼游戏');
+    expect(client.suggest).toHaveBeenCalledWith('鱿鱼游戏', 'normal');
   });
 
   it('第一个检索词没命中时会换下一个再试', async () => {
@@ -219,7 +220,7 @@ describe('RatingLookup 三种输入都要能命中同一部片', () => {
     });
     const outcome = await lookup.lookup({ title: 'Starship Troopers', type: 'unknown' });
 
-    expect(client.fetchRating).toHaveBeenCalledWith('1293544');
+    expect(client.fetchRating).toHaveBeenCalledWith('1293544', 'normal');
     if (outcome.status === 'ok') expect(outcome.rating.score).toBe(7.9);
   });
 
@@ -355,5 +356,111 @@ describe('RatingLookup 错误处理', () => {
     const client2 = client as unknown as { suggest: ReturnType<typeof vi.fn> };
     client2.suggest.mockResolvedValueOnce([matchingCandidate]);
     expect((await lookup.lookup(query)).status).toBe('ok');
+  });
+});
+
+describe('RatingLookup 与「感兴趣」记录', () => {
+  /** 组装一套带兴趣记录的 lookup，时钟可控。 */
+  function makeInterestedLookup(options: FakeClientOptions = {}) {
+    let time = 1_000_000;
+    const now = () => time;
+    const storage = memoryStorage();
+    const client = fakeClient(options);
+    const cache = new RatingCache(storage, now);
+    const interest = new InterestStore(storage, now);
+    return {
+      lookup: new RatingLookup(cache, client, interest),
+      client,
+      cache,
+      interest,
+      advance: (ms: number) => (time += ms),
+      now,
+    };
+  }
+
+  it('点击过的影片，查询按高优先级下发', async () => {
+    const { lookup, client, interest } = makeInterestedLookup({ candidates: [matchingCandidate] });
+    await interest.mark(query);
+
+    await lookup.lookup(query);
+
+    expect(client.suggest).toHaveBeenCalledWith(expect.any(String), 'high');
+  });
+
+  it('没点击过的影片仍是普通优先级', async () => {
+    const { lookup, client } = makeInterestedLookup({ candidates: [matchingCandidate] });
+
+    await lookup.lookup(query);
+
+    expect(client.suggest).toHaveBeenCalledWith(expect.any(String), 'normal');
+  });
+
+  it('点击之前记下的「未收录」会被重查一次', async () => {
+    // 「未收录」有相当一部分其实是当时被限流的结果。用户既然点开了这部片，
+    // 就值得再花一次配额确认，而不是让它在缓存里躺满 12 小时。
+    const { lookup, client, cache, interest, advance } = makeInterestedLookup();
+    expect(await lookup.lookup(query)).toEqual({ status: 'not_found' });
+    await cache.flush();
+    expect(client.suggest).toHaveBeenCalledTimes(1);
+
+    // 缓存生效：不点击的话不会再查。
+    await lookup.lookup(query);
+    expect(client.suggest).toHaveBeenCalledTimes(1);
+
+    advance(60_000);
+    await interest.mark(query);
+    client.suggest.mockResolvedValue([matchingCandidate]);
+
+    expect(await lookup.lookup(query)).toMatchObject({ status: 'ok' });
+    expect(client.suggest).toHaveBeenCalledTimes(2);
+  });
+
+  it('重查后仍未收录的，不会每次都再查一遍', async () => {
+    // 重查会以当前时间重写缓存，at 追上兴趣时间戳，绕过自动失效。
+    // 少了这一条，点过一次的冷门片会在之后每张卡片上反复消耗配额。
+    const { lookup, client, cache, interest, advance } = makeInterestedLookup();
+    await lookup.lookup(query);
+    await cache.flush();
+
+    advance(60_000);
+    await interest.mark(query);
+    await lookup.lookup(query);
+    await cache.flush();
+    expect(client.suggest).toHaveBeenCalledTimes(2);
+
+    advance(60_000);
+    expect(await lookup.lookup(query)).toEqual({ status: 'not_found' });
+    expect(client.suggest).toHaveBeenCalledTimes(2);
+  });
+
+  it('已有评分的缓存不会因为点击而重查', async () => {
+    const { lookup, client, cache, interest, advance } = makeInterestedLookup({
+      candidates: [matchingCandidate],
+    });
+    await lookup.lookup(query);
+    await cache.flush();
+
+    advance(60_000);
+    await interest.mark(query);
+
+    expect(await lookup.lookup(query)).toMatchObject({ status: 'ok' });
+    expect(client.suggest).toHaveBeenCalledTimes(1);
+  });
+
+  it('重查撞上限流时不写缓存，下次还能再试', async () => {
+    const { lookup, client, cache, interest, advance } = makeInterestedLookup();
+    await lookup.lookup(query);
+    await cache.flush();
+
+    advance(60_000);
+    await interest.mark(query);
+    client.fullSearch.mockRejectedValue(new RateLimitedError(30_000));
+
+    expect(await lookup.lookup(query)).toMatchObject({ status: 'error' });
+    await cache.flush();
+
+    // 限流不是「豆瓣没这部片」的证据，缓存必须保持原样，绕过依然成立。
+    client.suggest.mockResolvedValue([matchingCandidate]);
+    expect(await lookup.lookup(query)).toMatchObject({ status: 'ok' });
   });
 });

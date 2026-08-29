@@ -45,7 +45,9 @@ async function refreshStatus(): Promise<void> {
   try {
     const status = await sendRequest({ kind: 'status' });
     const backoff = describeBackoff(status.backoffUntil);
-    controls.status.textContent = backoff ?? `已缓存 ${status.cachedEntries} 条评分`;
+    // 关注数只在真有记录时才提，0 的时候多一句 "关注 0 部" 只是噪音。
+    const interest = status.interestEntries > 0 ? ` · 关注 ${status.interestEntries} 部` : '';
+    controls.status.textContent = backoff ?? `已缓存 ${status.cachedEntries} 条评分${interest}`;
     controls.status.classList.toggle('is-warning', backoff !== null);
   } catch {
     controls.status.textContent = '无法连接到扩展后台';

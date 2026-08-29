@@ -2,6 +2,7 @@ import { loadBackoff, saveBackoff } from './backoff-store';
 import { chromeLocalStorage, RatingCache, sweepLegacyEntries } from './cache';
 import { runProbe } from '../shared/probe';
 import { DoubanClient } from './douban/client';
+import { InterestStore } from './interest';
 import { RatingLookup } from './lookup';
 import { RequestQueue } from './queue';
 import type { ExtensionRequest, ExtensionResponse } from '../shared/messages';
@@ -28,7 +29,8 @@ const cache = new RatingCache(storage);
 const client = new DoubanClient(queue, {
   onFullSearchBackoffChange: (until) => void saveBackoff(storage, { fullSearch: until }),
 });
-const lookup = new RatingLookup(cache, client);
+const interest = new InterestStore(storage);
+const lookup = new RatingLookup(cache, client, interest);
 
 /**
  * 恢复上一次进程留下的退避状态。
@@ -55,6 +57,12 @@ async function handle(request: ExtensionRequest): Promise<ExtensionResponse> {
           : { status: 'disabled' };
       return { kind: 'lookup', outcome };
     }
+    case 'interest': {
+      // 关掉扩展时不记录 —— 用户没在用这个功能，攒的记录只是噪音。
+      const settings = await loadSettings();
+      const recorded = settings.enabled ? await interest.mark(request.query) : false;
+      return { kind: 'interest', recorded };
+    }
     case 'clearCache':
       return { kind: 'clearCache', cleared: await cache.clear() };
     case 'status':
@@ -64,6 +72,7 @@ async function handle(request: ExtensionRequest): Promise<ExtensionResponse> {
           cachedEntries: await cache.size(),
           backoffUntil: queue.backoffUntil,
           pendingRequests: queue.pending,
+          interestEntries: await interest.size(),
         },
       };
   }

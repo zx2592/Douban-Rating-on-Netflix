@@ -194,6 +194,44 @@ async function processModal(modal: HTMLElement): Promise<void> {
   upsertBadge(anchor, { variant: 'modal', position: settings.badgePosition, identity, state });
 }
 
+/**
+ * 点击卡片 = 用户对这部片感兴趣。
+ *
+ * 之前扩展对「主动点开的片」和「随手划过的片」一视同仁：同一个队列、同样的
+ * 「未收录」缓存 TTL。在匿名配额本就很紧的前提下这是明显的错配 —— 记下这个
+ * 信号，background 就能把这部片的查询插到队首，并且允许它绕过一次早先写下的
+ * 「未收录」（那多半只是当时被限流）。
+ *
+ * 用捕获阶段监听：Netflix 自己会在冒泡阶段 stopPropagation，挂在冒泡上收不到。
+ * 挂在 document.body 而不是 document 上 —— 捕获阶段一样会先于页面自己的处理
+ * 器触发，而作用域和下面的 MutationObserver 保持一致。
+ */
+function handleCardClick(event: Event): void {
+  if (!settings.enabled) return;
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+
+  const card = target.closest<HTMLElement>(joinSelectors(NETFLIX_SELECTORS.card));
+  if (!card) return;
+
+  const query = extractFromCard(card);
+  if (!query) return;
+
+  void recordInterest(query, card);
+}
+
+async function recordInterest(query: MediaQuery, card: HTMLElement): Promise<void> {
+  const recorded = await sendRequest({ kind: 'interest', query });
+  // 冷却期内重复点击不会更新时间戳，此时也不必重查 —— 否则连点几下
+  // 就是连发几次请求。
+  if (!recorded) return;
+  debug('已记录兴趣', query.title);
+
+  // 立刻按新的优先级重查一次，让用户点开的这部片先出分。
+  // 若已经有分，lookup 会直接命中缓存，不产生任何请求。
+  if (settings.showOnCards && card.isConnected) void processCard(card);
+}
+
 function scan(): void {
   if (!settings.enabled) return;
 
@@ -254,6 +292,8 @@ async function start(): Promise<void> {
     if (next.enabled) scheduleScan();
     else if (wasEnabled) debug('已关闭，角标已清除');
   });
+
+  document.body.addEventListener('click', handleCardClick, true);
 
   new MutationObserver(scheduleScan).observe(document.body, {
     childList: true,

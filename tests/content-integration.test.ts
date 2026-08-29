@@ -18,6 +18,9 @@ let intersectionCallback: IntersectionCallback | null = null;
 let observedElements: Element[] = [];
 let lookupRequests: MediaQuery[] = [];
 let lookupResponder: (query: MediaQuery) => LookupOutcome;
+let interestRequests: MediaQuery[] = [];
+/** background 是否把这次点击记成了新的兴趣（冷却期内会返回 false）。 */
+let interestResponder: (query: MediaQuery) => boolean;
 
 class FakeIntersectionObserver {
   constructor(callback: IntersectionCallback) {
@@ -106,9 +109,15 @@ function installChromeMock(): void {
     },
     runtime: {
       sendMessage: vi.fn(async (request: ExtensionRequest): Promise<ExtensionResponse> => {
-        if (request.kind !== 'lookup') throw new Error('本用例只处理 lookup');
-        lookupRequests.push(request.query);
-        return { kind: 'lookup', outcome: lookupResponder(request.query) };
+        if (request.kind === 'lookup') {
+          lookupRequests.push(request.query);
+          return { kind: 'lookup', outcome: lookupResponder(request.query) };
+        }
+        if (request.kind === 'interest') {
+          interestRequests.push(request.query);
+          return { kind: 'interest', recorded: interestResponder(request.query) };
+        }
+        throw new Error(`本用例不处理 ${request.kind}`);
       }),
     },
   };
@@ -123,6 +132,8 @@ beforeEach(() => {
   intersectionCallback = null;
   observedElements = [];
   lookupRequests = [];
+  interestRequests = [];
+  interestResponder = () => true;
   lookupResponder = () => ({
     status: 'ok',
     rating: {
@@ -346,5 +357,88 @@ describe('内容脚本整体链路', () => {
 
     expect(observedElements).toHaveLength(0);
     expect(document.querySelector('.dbr-modal')).not.toBeNull();
+  });
+});
+
+describe('点击卡片 = 表达兴趣', () => {
+  /** 模拟真实点击：事件从封面图上冒起，而不是直接点在卡片元素上。 */
+  function clickCover(): void {
+    const cover = document.querySelector('img');
+    cover?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  }
+
+  it('点击封面会把这部片记成感兴趣', async () => {
+    document.body.innerHTML = CARD_HTML;
+    await loadContentScript();
+
+    clickCover();
+    await settle(100);
+
+    expect(interestRequests).toHaveLength(1);
+    expect(interestRequests[0]).toMatchObject({ title: '河边的错误' });
+  });
+
+  it('记下兴趣后立刻重查一次，让点开的片先出分', async () => {
+    // 之前这部片被记成「未收录」，页面上没有角标。用户点开它，
+    // background 允许绕过那条缓存重查一次，这次拿到了分。
+    lookupResponder = () => ({ status: 'not_found' });
+    document.body.innerHTML = CARD_HTML;
+    await loadContentScript();
+    scrollIntoView();
+    await pastDwell();
+    expect(document.querySelector('.dbr-badge')).toBeNull();
+
+    lookupResponder = () => ({
+      status: 'ok',
+      rating: {
+        id: '35131346',
+        title: '河边的错误',
+        score: 7.4,
+        votes: 254321,
+        year: 2023,
+        type: 'movie',
+        url: 'https://movie.douban.com/subject/35131346/',
+        confidence: 100,
+      },
+    });
+    clickCover();
+    await settle(200);
+
+    expect(document.querySelector('.dbr-value')?.textContent).toBe('7.4');
+  });
+
+  it('冷却期内的重复点击不会再发查询', async () => {
+    // background 返回 false 表示时间戳没刷新。连点几下若每次都重查，
+    // 紧张的配额会被同一部片吃掉。
+    interestResponder = () => false;
+    document.body.innerHTML = CARD_HTML;
+    await loadContentScript();
+
+    clickCover();
+    clickCover();
+    await settle(200);
+
+    expect(interestRequests).toHaveLength(2);
+    expect(lookupRequests).toHaveLength(0);
+  });
+
+  it('点击云游戏卡片什么也不记', async () => {
+    document.body.innerHTML = CLOUD_GAME_HTML;
+    await loadContentScript();
+
+    clickCover();
+    await settle(100);
+
+    expect(interestRequests).toHaveLength(0);
+  });
+
+  it('点在卡片之外的地方不会误记', async () => {
+    document.body.innerHTML = `<div id="nav">导航</div>${CARD_HTML}`;
+    await loadContentScript();
+
+    document.getElementById('nav')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await settle(100);
+
+    expect(interestRequests).toHaveLength(0);
   });
 });

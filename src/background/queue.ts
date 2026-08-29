@@ -36,10 +36,19 @@ export interface QueueOptions {
   onBackoffChange?: (until: number) => void;
 }
 
+/**
+ * 请求优先级。
+ *
+ * high 用于用户主动点击过的影片 —— 配额紧的时候，先把它想看的那几部查出来，
+ * 远比按顺序把整屏都查一遍有用。
+ */
+export type Priority = 'normal' | 'high';
+
 interface QueueItem {
   run: () => Promise<unknown>;
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
+  priority: Priority;
 }
 
 const defaultSleep = (ms: number): Promise<void> =>
@@ -108,7 +117,7 @@ export class RequestQueue {
    * 排入一个请求。若当前正被限流，立即以 RateLimitedError 拒绝而不是排队等待
    * —— 用户还在滚动页面，与其让他等半分钟，不如让这张卡片这轮先空着。
    */
-  enqueue<T>(run: () => Promise<T>): Promise<T> {
+  enqueue<T>(run: () => Promise<T>, priority: Priority = 'normal'): Promise<T> {
     const backoffUntil = this.backoffUntil;
     if (backoffUntil !== null) {
       return Promise.reject(new RateLimitedError(backoffUntil - this.now()));
@@ -117,11 +126,18 @@ export class RequestQueue {
       return Promise.reject(new Error('请求队列已满'));
     }
     return new Promise<T>((resolve, reject) => {
-      this.items.push({
+      const item: QueueItem = {
         run: run as () => Promise<unknown>,
         resolve: resolve as (value: unknown) => void,
         reject,
-      });
+        priority,
+      };
+      // 高优先级插到所有普通任务之前，但排在已有的高优先级任务之后 ——
+      // 同一档内保持先来先服务，否则连续点几部片会互相插队。
+      const insertAt =
+        priority === 'high' ? this.items.findIndex((queued) => queued.priority === 'normal') : -1;
+      if (insertAt === -1) this.items.push(item);
+      else this.items.splice(insertAt, 0, item);
       void this.drain();
     });
   }

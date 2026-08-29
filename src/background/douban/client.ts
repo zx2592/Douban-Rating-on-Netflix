@@ -1,5 +1,5 @@
 import type { Candidate } from '../matcher';
-import { RateLimitedError, type RequestQueue } from '../queue';
+import { RateLimitedError, type Priority, type RequestQueue } from '../queue';
 import { parseSubjectAbstract, parseSuggest, type RatingDetail } from './parse';
 import { extractEmbeddedData, parseSearchResults } from './search';
 
@@ -76,9 +76,9 @@ export class DoubanClient {
    * （由上层用 fetchRating 补）。返回空数组既可能是真没有，也可能是它在
    * 限流 —— 无法区分，所以上层拿不到可信匹配时要再试 fullSearch。
    */
-  async suggest(title: string): Promise<Candidate[]> {
+  async suggest(title: string, priority: Priority = 'normal'): Promise<Candidate[]> {
     const url = `${SUGGEST_URL}?q=${encodeURIComponent(title)}`;
-    const body = await this.request(url, 'application/json');
+    const body = await this.request(url, 'application/json', priority);
     return parseSuggest(this.parseJson(body, '豆瓣检索接口'));
   }
 
@@ -86,12 +86,12 @@ export class DoubanClient {
    * 兜底检索：完整搜索。召回宽（含港台译名），候选自带评分；
    * 软限流严，触发后本方法静默 5 分钟，避免每张卡片都去撞一次。
    */
-  async fullSearch(title: string): Promise<Candidate[]> {
+  async fullSearch(title: string, priority: Priority = 'normal'): Promise<Candidate[]> {
     if (Date.now() < this.fullSearchBackoffUntil) {
       throw new Error('豆瓣完整搜索仍在限流静默期');
     }
     const url = `${SEARCH_URL}?cat=1002&search_text=${encodeURIComponent(title)}`;
-    const data = extractEmbeddedData(await this.request(url, 'text/html'));
+    const data = extractEmbeddedData(await this.request(url, 'text/html', priority));
     if (data === null) throw new Error('豆瓣搜索页的结构已变化');
 
     const errorInfo = (data as Record<string, unknown>)['error_info'];
@@ -112,9 +112,9 @@ export class DoubanClient {
    * 是一个有效结果；接口本身不可用时抛异常，由上层区分对待 —— 把网络故障
    * 显示成「暂无评分」会误导用户。
    */
-  async fetchRating(id: string): Promise<RatingDetail> {
+  async fetchRating(id: string, priority: Priority = 'normal'): Promise<RatingDetail> {
     const url = `${ABSTRACT_URL}?subject_id=${encodeURIComponent(id)}`;
-    const payload = this.parseJson(await this.request(url, 'application/json'), '豆瓣评分接口');
+    const payload = this.parseJson(await this.request(url, 'application/json', priority), '豆瓣评分接口');
     const detail = parseSubjectAbstract(payload);
     if (!detail) throw new Error('豆瓣评分接口的返回结构已变化');
     return detail;
@@ -129,7 +129,7 @@ export class DoubanClient {
     }
   }
 
-  private request(url: string, accept: string): Promise<string> {
+  private request(url: string, accept: string, priority: Priority = 'normal'): Promise<string> {
     return this.queue.enqueue(async () => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -167,6 +167,6 @@ export class DoubanClient {
       } finally {
         clearTimeout(timer);
       }
-    });
+    }, priority);
   }
 }
