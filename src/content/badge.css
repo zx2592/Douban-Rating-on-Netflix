@@ -1,0 +1,95 @@
+/*
+ * 角标样式。
+ *
+ * Netflix 的样式表权重很高，且会随改版变化，所以这里对定位、字体、颜色这些
+ * 决定"角标还能不能看"的属性一律加 !important。视觉细节（阴影、圆角）不加，
+ * 万一被覆盖也只是丑一点，不会不可用。
+ */
+
+.dbr-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 3px !important;
+  box-sizing: border-box !important;
+  padding: 2px 5px !important;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.78) !important;
+  color: #fff !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 1.25 !important;
+  letter-spacing: 0 !important;
+  text-decoration: none !important;
+  white-space: nowrap !important;
+  pointer-events: auto !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  /* 盖在封面图之上，但要低于 Netflix 的弹层（其 z-index 在 1000 以上）。 */
+  z-index: 5 !important;
+}
+
+.dbr-badge .dbr-logo {
+  display: inline-block !important;
+  padding: 0 3px !important;
+  border-radius: 2px;
+  background: #2e963d !important;
+  color: #fff !important;
+  font-size: 10px !important;
+  line-height: 14px !important;
+}
+
+.dbr-badge .dbr-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 分数分档配色 */
+.dbr-tier-high .dbr-value { color: #7ddc8b !important; }
+.dbr-tier-mid  .dbr-value { color: #ffd479 !important; }
+.dbr-tier-low  .dbr-value { color: #ff9d9d !important; }
+.dbr-state-unrated .dbr-value { color: #b6b6b6 !important; }
+
+/* 可点击态 */
+.dbr-badge[role='link'] { cursor: pointer !important; }
+.dbr-badge[role='link']:hover { background: rgba(0, 0, 0, 0.92) !important; }
+.dbr-badge[role='link']:focus-visible {
+  outline: 2px solid #2e963d !important;
+  outline-offset: 1px !important;
+}
+
+/* 查询中：整体压暗，并让"豆"字轻微呼吸，避免用户以为卡住了 */
+.dbr-state-loading { opacity: 0.55 !important; }
+.dbr-state-loading .dbr-logo { animation: dbr-pulse 1.2s ease-in-out infinite; }
+
+@keyframes dbr-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+/* 未收录时不占位，直接隐藏，避免列表页出现一排无意义的角标 */
+.dbr-state-missing { display: none !important; }
+
+/* ---- 列表卡片：绝对定位压在封面上 ---- */
+.dbr-card {
+  position: absolute !important;
+}
+.dbr-card.dbr-pos-top-left { top: 4px !important; left: 4px !important; right: auto !important; bottom: auto !important; }
+.dbr-card.dbr-pos-top-right { top: 4px !important; right: 4px !important; left: auto !important; bottom: auto !important; }
+.dbr-card.dbr-pos-bottom-left { bottom: 4px !important; left: 4px !important; right: auto !important; top: auto !important; }
+.dbr-card.dbr-pos-bottom-right { bottom: 4px !important; right: 4px !important; left: auto !important; top: auto !important; }
+
+/* ---- 详情弹层：跟着元数据行正常排版，字号大一档 ---- */
+.dbr-modal {
+  position: static !important;
+  margin-left: 8px !important;
+  vertical-align: middle !important;
+  font-size: 13px !important;
+  padding: 3px 7px !important;
+}
+.dbr-modal .dbr-logo { font-size: 11px !important; line-height: 16px !important; }
+/* 详情层里即使没有评分也保留占位，用户是主动点开来看信息的 */
+.dbr-modal.dbr-state-missing { display: inline-flex !important; opacity: 0.5 !important; }
+.dbr-modal.dbr-state-missing .dbr-value::after { content: '未收录'; font-weight: 400; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dbr-state-loading .dbr-logo { animation: none; }
+}

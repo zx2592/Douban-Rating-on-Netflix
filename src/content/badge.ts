@@ -1,0 +1,142 @@
+import type { BadgePosition } from '../shared/settings';
+
+/**
+ * 角标的注入与更新。
+ *
+ * 刻意不用 Shadow DOM：列表页上同时存在几十到上百张卡片，每张都挂一个
+ * shadow root 的开销不划算。改为全部 class 加 dbr- 前缀，并对关键样式加
+ * !important，避免被 Netflix 自己的样式覆盖。
+ */
+
+export const BADGE_CLASS = 'dbr-badge';
+/** 记录角标当前渲染的是哪部片子，用于识别被 Netflix 复用的卡片。 */
+const IDENTITY_ATTR = 'data-dbr-identity';
+
+export type BadgeState =
+  | { kind: 'loading' }
+  /** 匹配到条目且有评分。 */
+  | { kind: 'rated'; score: number; votes: number | null; url: string; title: string }
+  /** 匹配到条目，但豆瓣因评价人数太少还没出分。 */
+  | { kind: 'unrated'; url: string; title: string }
+  /** 豆瓣上没有可信的匹配项。 */
+  | { kind: 'missing' };
+
+export interface BadgeOptions {
+  /** card 用绝对定位压在封面上，modal 跟着元数据行排版。 */
+  variant: 'card' | 'modal';
+  position: BadgePosition;
+  /** 当前卡片对应的影片标识，变了就说明卡片被复用了。 */
+  identity: string;
+  state: BadgeState;
+}
+
+/** 按分数分档上色：豆瓣 8 分以上是"值得看"的普遍共识。 */
+function scoreTier(score: number): string {
+  if (score >= 8) return 'high';
+  if (score >= 6.5) return 'mid';
+  return 'low';
+}
+
+function formatVotes(votes: number | null): string {
+  if (votes === null) return '';
+  if (votes >= 10000) return `${(votes / 10000).toFixed(1)} 万人评价`;
+  return `${votes} 人评价`;
+}
+
+function describe(state: BadgeState): string {
+  switch (state.kind) {
+    case 'loading':
+      return '正在查询豆瓣评分';
+    case 'rated': {
+      const votes = formatVotes(state.votes);
+      return `豆瓣 ${state.score.toFixed(1)}${votes ? `（${votes}）` : ''} · ${state.title} · 点击查看条目`;
+    }
+    case 'unrated':
+      return `豆瓣暂无评分 · ${state.title} · 点击查看条目`;
+    case 'missing':
+      return '豆瓣未收录';
+  }
+}
+
+function findBadge(anchor: HTMLElement): HTMLElement | null {
+  for (const child of Array.from(anchor.children)) {
+    if (child instanceof HTMLElement && child.classList.contains(BADGE_CLASS)) return child;
+  }
+  return null;
+}
+
+export function removeBadge(anchor: HTMLElement): void {
+  findBadge(anchor)?.remove();
+}
+
+/** 新建或就地更新角标。同一个 anchor 上始终只有一个角标。 */
+export function upsertBadge(anchor: HTMLElement, options: BadgeOptions): void {
+  const { variant, position, identity, state } = options;
+
+  let badge = findBadge(anchor);
+  if (!badge) {
+    badge = document.createElement('div');
+    badge.className = BADGE_CLASS;
+    const logo = document.createElement('span');
+    logo.className = 'dbr-logo';
+    logo.textContent = '豆';
+    const value = document.createElement('span');
+    value.className = 'dbr-value';
+    badge.append(logo, value);
+
+    if (variant === 'card') {
+      // 绝对定位需要一个定位参考系；Netflix 的封面容器不一定有。
+      const computed = window.getComputedStyle(anchor);
+      if (computed.position === 'static') anchor.style.position = 'relative';
+    }
+    anchor.append(badge);
+  }
+
+  badge.setAttribute(IDENTITY_ATTR, identity);
+  badge.className = `${BADGE_CLASS} dbr-${variant} dbr-pos-${position} dbr-state-${state.kind}`;
+  badge.title = describe(state);
+
+  const value = badge.querySelector<HTMLElement>('.dbr-value');
+  if (value) {
+    value.textContent =
+      state.kind === 'rated' ? state.score.toFixed(1) : state.kind === 'unrated' ? '—' : '';
+  }
+
+  if (state.kind === 'rated') badge.classList.add(`dbr-tier-${scoreTier(state.score)}`);
+
+  const url = state.kind === 'rated' || state.kind === 'unrated' ? state.url : null;
+  bindOpen(badge, url);
+}
+
+/**
+ * 绑定点击跳转。卡片上的角标位于 Netflix 自己的 <a> 内部，必须阻止事件
+ * 继续冒泡，否则点评分会连带触发 Netflix 的播放跳转。
+ */
+function bindOpen(badge: HTMLElement, url: string | null): void {
+  const existing = (badge as HTMLElement & { _dbrOpen?: (event: Event) => void })._dbrOpen;
+  if (existing) {
+    badge.removeEventListener('click', existing, true);
+    badge.removeEventListener('keydown', existing as EventListener, true);
+  }
+
+  if (!url) {
+    badge.removeAttribute('role');
+    badge.removeAttribute('tabindex');
+    return;
+  }
+
+  const open = (event: Event): void => {
+    if (event instanceof KeyboardEvent && event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    event.stopPropagation();
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  // 用 div[role=link] 而不是 <a>：卡片外层已经是 <a>，嵌套 <a> 会被浏览器
+  // 在解析阶段拆开，反而破坏 Netflix 自己的 DOM。
+  badge.setAttribute('role', 'link');
+  badge.setAttribute('tabindex', '0');
+  badge.addEventListener('click', open, true);
+  badge.addEventListener('keydown', open, true);
+  (badge as HTMLElement & { _dbrOpen?: (event: Event) => void })._dbrOpen = open;
+}

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>豆瓣评分 for Netflix</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="head">
+      <span class="logo">豆</span>
+      <h1>豆瓣评分 for Netflix</h1>
+    </header>
+
+    <label class="row row--main">
+      <span class="label">启用扩展</span>
+      <input type="checkbox" id="enabled" />
+    </label>
+
+    <div class="group" id="details">
+      <label class="row">
+        <span class="label">在列表封面上显示</span>
+        <input type="checkbox" id="showOnCards" />
+      </label>
+
+      <label class="row">
+        <span class="label">在详情弹层中显示</span>
+        <input type="checkbox" id="showOnDetail" />
+      </label>
+
+      <label class="row">
+        <span class="label">豆瓣未收录时也占位</span>
+        <input type="checkbox" id="showUnrated" />
+      </label>
+
+      <label class="row">
+        <span class="label">角标位置</span>
+        <select id="badgePosition">
+          <option value="top-left">左上</option>
+          <option value="top-right">右上</option>
+          <option value="bottom-left">左下</option>
+          <option value="bottom-right">右下</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="status" id="status">读取状态中…</div>
+
+    <button class="clear" id="clearCache" type="button">清空评分缓存</button>
+
+    <p class="hint">
+      修改后刷新 Netflix 页面即可生效。评分数据来自豆瓣，仅在本地缓存，不会上传到任何地方。
+    </p>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
