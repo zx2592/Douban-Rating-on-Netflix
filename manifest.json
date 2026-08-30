@@ -12,8 +12,7 @@
     "https://movie.douban.com/*",
     "https://v3.sg.media-imdb.com/*",
     "https://v2.sg.media-imdb.com/*",
-    "https://api.graphql.imdb.com/*",
-    "https://www.imdb.com/*"
+    "https://api.graphql.imdb.com/*"
   ],
   "background": {
     "service_worker": "background.js",

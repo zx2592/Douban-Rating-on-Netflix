@@ -224,3 +224,31 @@ export function diceCoefficient(a: readonly string[], b: readonly string[]): num
   }
   return (2 * overlap) / (a.length + b.length);
 }
+
+/**
+ * 标题里是否含 CJK 字符（中日韩统一表意文字及其扩展区、假名、谚文）。
+ */
+export function hasCJK(text: string): boolean {
+  return /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/.test(text);
+}
+
+/** 标题里是否含拉丁字母。 */
+export function hasLatin(text: string): boolean {
+  return /[A-Za-z]/.test(text);
+}
+
+/**
+ * 两个标题的书写系统能不能放在一起比相似度。
+ *
+ * 用途：IMDb 的下拉建议接口认得中文片名（查「鱿鱼游戏」能命中），但**返回的
+ * 标题是英文**（"Squid Game"）。拿这两个串去算词重合必然是 0 分，整条结果
+ * 就被匹配器扔掉了 —— 搜索明明成功了，用户却一个 IMDb 分都看不到。
+ * 所以在打分之前要先判断：这两个名字压根不在同一个书写系统里，
+ * 相似度这个信号本身就不适用，得换别的依据。
+ */
+export function comparableScripts(a: string, b: string): boolean {
+  // 一方是纯 CJK、另一方完全没有 CJK —— 没有可比的字面。
+  if (hasCJK(a) && !hasCJK(b) && !hasLatin(a)) return false;
+  if (hasCJK(b) && !hasCJK(a) && !hasLatin(b)) return false;
+  return true;
+}

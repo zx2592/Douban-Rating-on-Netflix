@@ -1,6 +1,6 @@
 import type { Candidate } from '../matcher';
 import { RateLimitedError, type Priority, type RequestQueue } from '../queue';
-import { parseGraphqlRating, parseJsonLdRating, parseSuggestion, type RatingDetail } from './parse';
+import { parseGraphqlRating, parseSuggestion, type RatingDetail } from './parse';
 
 /**
  * IMDb 站内接口的客户端。
@@ -28,7 +28,22 @@ const SUGGESTION_ENDPOINTS = [
 ];
 
 const GRAPHQL_URL = 'https://api.graphql.imdb.com/';
-const TITLE_URL = (id: string) => `https://www.imdb.com/title/${encodeURIComponent(id)}/`;
+
+/**
+ * GraphQL 必须带上这几个头，否则一律 403。**这是实测出来的，不是抄的。**
+ *
+ * 同一个地址、同一个查询：裸 POST → 403（正文是 nginx 的 403 页面）；
+ * 改用 GET → 403；带上这三个头 → 200 + 444 字节的评分。
+ *
+ * 为什么是这几个：它们是 imdb.com 前端自己调这个接口时带的。刻意**不用**
+ * Origin / Referer —— 那两个是 Fetch 规范里的禁止修改头，扩展设了也会被
+ * 浏览器忽略。所幸实测证明不需要它们，只要这三个自定义头就够。
+ */
+const IMDB_HEADERS: Record<string, string> = {
+  'x-imdb-client-name': 'imdb-web-next',
+  'x-imdb-user-country': 'US',
+  'x-imdb-user-language': 'en-US',
+};
 
 /**
  * 取分只要这三个字段，别的一律不取 —— 响应越小越快，也越不容易因为
@@ -38,11 +53,6 @@ const RATING_QUERY =
   'query TitleRating($id: ID!) { title(id: $id) { ratingsSummary { aggregateRating voteCount } } }';
 
 const REQUEST_TIMEOUT_MS = 8000;
-/** 条目页 HTML 有 1–2 MB，只取开头这一段来找 JSON-LD，避免整页读进内存。 */
-const HTML_SCAN_LIMIT = 600_000;
-
-/** 取分路径的标识，用于把失效的那条标记掉。 */
-type RatingStrategy = 'graphql' | 'jsonld';
 
 export interface ImdbClientOptions {
   fetchImpl?: typeof fetch;
@@ -51,12 +61,11 @@ export interface ImdbClientOptions {
 export class ImdbClient {
   private readonly fetchImpl: typeof fetch;
   /**
-   * 本进程内已确认结构对不上的路径。
+   * 本进程内已确认结构对不上的检索入口。
    *
    * 只在内存里，service worker 重启后自动清空 —— 这是有意的：IMDb 改回来或
    * 我们改对了之后，不需要用户做任何操作就能自愈。
    */
-  private readonly deadStrategies = new Set<RatingStrategy>();
   private deadEndpoints = new Set<number>();
 
   constructor(
@@ -68,10 +77,7 @@ export class ImdbClient {
 
   /** 诊断页用：当前哪些路径已被判定不可用。 */
   get disabledPaths(): string[] {
-    return [
-      ...[...this.deadStrategies],
-      ...[...this.deadEndpoints].map((index) => `suggestion#${index}`),
-    ];
+    return [...this.deadEndpoints].map((index) => `suggestion#${index}`);
   }
 
   /**
@@ -106,45 +112,23 @@ export class ImdbClient {
   /**
    * 取某个条目的评分。
    *
+   * 只有 GraphQL 这一条路，**刻意不留条目页 HTML 作兜底**：实测
+   * www.imdb.com/title/… 在浏览器里也只返回 1997 字节的反爬拦截页
+   * （正文明确含 "enable javascript" 和 "challenge"）。留着它意味着
+   * 每次 GraphQL 失败都要再白下一次 2KB 的拦截页、再报一条误导性的
+   * 「页面里没有评分数据」。这和当初移除豆瓣条目页兜底是同一个道理。
+   *
    * score 为 null 表示「IMDb 确实还没给这部片出分」，是一个有效结果；
-   * 所有路径都不可用时抛异常，由上层区分对待 —— 把网络故障显示成
+   * 接口不可用时抛异常，由上层区分对待 —— 把网络故障显示成
    * 「暂无评分」会误导用户。
    */
   async fetchRating(id: string, priority: Priority = 'normal'): Promise<RatingDetail> {
-    let lastError: unknown = null;
-
-    for (const strategy of ['graphql', 'jsonld'] as const) {
-      if (this.deadStrategies.has(strategy)) continue;
-      try {
-        return strategy === 'graphql'
-          ? await this.fetchRatingViaGraphql(id, priority)
-          : await this.fetchRatingViaHtml(id, priority);
-      } catch (error) {
-        if (error instanceof RateLimitedError) throw error;
-        if (error instanceof StructureError) this.deadStrategies.add(strategy);
-        lastError = error;
-      }
-    }
-
-    throw lastError instanceof Error ? lastError : new Error('IMDb 取分路径全部不可用');
-  }
-
-  /** 轻路径：GraphQL，只回几十字节。 */
-  private async fetchRatingViaGraphql(id: string, priority: Priority): Promise<RatingDetail> {
     const body = await this.request(GRAPHQL_URL, 'application/json', priority, {
       method: 'POST',
       body: JSON.stringify({ query: RATING_QUERY, variables: { id } }),
     });
     const detail = parseGraphqlRating(parseJson(body));
     if (!detail) throw new StructureError('IMDb GraphQL 的返回结构已变化');
-    return detail;
-  }
-
-  /** 重路径：条目页 HTML 里的 JSON-LD。GraphQL 不可用时才走。 */
-  private async fetchRatingViaHtml(id: string, priority: Priority): Promise<RatingDetail> {
-    const html = await this.request(TITLE_URL(id), 'text/html', priority);
-    const detail = parseJsonLdRating(html.slice(0, HTML_SCAN_LIMIT));
-    if (!detail) throw new StructureError('IMDb 条目页里没有可解析的评分数据');
     return detail;
   }
 
@@ -158,7 +142,7 @@ export class ImdbClient {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
       try {
-        const headers: Record<string, string> = { Accept: accept };
+        const headers: Record<string, string> = { Accept: accept, ...IMDB_HEADERS };
         if (init.body !== undefined) headers['Content-Type'] = 'application/json';
 
         const response = await this.fetchImpl(url, {

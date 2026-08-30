@@ -1,5 +1,5 @@
 import type { ImdbClient } from './client';
-import { pickBestMatch } from '../matcher';
+import { pickImdbMatch } from './match';
 import type { RatingProvider } from '../provider';
 import type { Priority } from '../queue';
 import { buildSearchTerms } from '../search-terms';
@@ -19,7 +19,7 @@ export class ImdbProvider implements RatingProvider {
   async find(query: MediaQuery, priority: Priority): Promise<Rating | null> {
     let best = null;
     for (const term of buildSearchTerms(query.title)) {
-      best = pickBestMatch(query, await this.client.search(term, priority));
+      best = pickImdbMatch(query, await this.client.search(term, priority));
       if (best) break;
     }
     if (!best) return null;

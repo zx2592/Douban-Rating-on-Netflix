@@ -108,50 +108,61 @@ describe('ImdbClient 检索入口降级', () => {
 });
 
 describe('ImdbClient 取分路径降级', () => {
+  // 本机实测抓回来的真实响应（含 IMDb 附带的使用条款声明）。
   const GRAPHQL_OK = {
-    data: { title: { ratingsSummary: { aggregateRating: 9.5, voteCount: 2200000 } } },
+    data: { title: { ratingsSummary: { aggregateRating: 9.5, voteCount: 2668078 } } },
+    extensions: {
+      disclaimer:
+        'Public, commercial, and/or non-private use of the IMDb data provided by this API is not allowed.',
+    },
   };
-  const HTML_OK = `<script type="application/ld+json">
-    {"aggregateRating":{"ratingValue":8.4,"ratingCount":1234}}</script>`;
 
   it('优先走 GraphQL，且用 POST', async () => {
     const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse(GRAPHQL_OK));
     const client = new ImdbClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    expect(await client.fetchRating('tt0903747')).toEqual({ score: 9.5, votes: 2200000 });
+    expect(await client.fetchRating('tt0903747')).toEqual({ score: 9.5, votes: 2668078 });
     expect(String(fetchImpl.mock.calls[0]![0])).toContain('api.graphql.imdb.com');
     expect((fetchImpl.mock.calls[0]![1] as RequestInit).method).toBe('POST');
   });
 
-  it('GraphQL 结构对不上时退回条目页 JSON-LD', async () => {
-    const fetchImpl = vi.fn(async (url: string) =>
-      String(url).includes('graphql')
-        ? jsonResponse({ errors: [{ message: 'PersistedQueryNotFound' }] })
-        : new Response(HTML_OK, { status: 200 }),
+  it('必须带上 imdb 的自定义头，否则 403', () => {
+    // 实测：同一个地址、同一个查询，裸 POST → 403（nginx 的 403 页面），
+    // 改用 GET → 403，带上这三个头 → 200 + 评分。这不是抄来的，是打出来的。
+    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse(GRAPHQL_OK));
+    const client = new ImdbClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    return client.fetchRating('tt0903747').then(() => {
+      const headers = (fetchImpl.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
+      expect(headers['x-imdb-client-name']).toBe('imdb-web-next');
+      expect(headers['x-imdb-user-country']).toBeDefined();
+      expect(headers['x-imdb-user-language']).toBeDefined();
+      // Origin / Referer 刻意不设：它们是 Fetch 规范的禁止修改头，扩展设了
+      // 也会被浏览器忽略。实测证明不需要它们。
+      expect(headers['Origin']).toBeUndefined();
+      expect(headers['Referer']).toBeUndefined();
+    });
+  });
+
+  it('不再走条目页兜底 —— 那条实测是反爬拦截页', () => {
+    // www.imdb.com/title/… 在浏览器里也只返回 1997B 的拦截页（含
+    // "enable javascript" 和 "challenge"）。留着它意味着每次失败都白下
+    // 一次 2KB，还会报出误导性的「页面里没有评分数据」。
+    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ errors: [{ message: 'nope' }] }),
     );
     const client = new ImdbClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    expect(await client.fetchRating('tt0903747')).toEqual({ score: 8.4, votes: 1234 });
-  });
-
-  it('GraphQL 被判失效后，后续直接走兜底路径', async () => {
-    const fetchImpl = vi.fn(async (url: string, _init?: RequestInit) =>
-      String(url).includes('graphql')
-        ? jsonResponse({ errors: [] })
-        : new Response(HTML_OK, { status: 200 }),
+    return client.fetchRating('tt0903747').then(
+      () => expect.unreachable('应当抛错'),
+      () => {
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+        expect(String(fetchImpl.mock.calls[0]![0])).toContain('api.graphql.imdb.com');
+      },
     );
-    const client = new ImdbClient(fastQueue(), { fetchImpl: fetchImpl as unknown as typeof fetch });
-
-    await client.fetchRating('tt0903747');
-    fetchImpl.mockClear();
-    await client.fetchRating('tt0944947');
-
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(String(fetchImpl.mock.calls[0]![0])).toContain('imdb.com/title/');
-    expect(client.disabledPaths).toContain('graphql');
   });
 
-  it('两条路都不行时抛异常，绝不谎报"暂无评分"', async () => {
+  it('取分失败时抛异常，绝不谎报"暂无评分"', async () => {
     // 把网络故障显示成「IMDb 暂无评分」是在骗用户，而且会被上层
     // 当成有效结果写进缓存，错误会存活好几天。
     const fetchImpl = vi.fn(async () => new Response('nope', { status: 200 }));
