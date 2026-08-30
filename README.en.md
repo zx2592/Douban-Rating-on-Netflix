@@ -390,13 +390,3 @@ v0.1 built the architecture, but all three external dependencies turned out not 
 - **Coexistence with translation extensions.** The badge declares `translate="no"`.
 
 </details>
-
-## Roadmap
-
-- [x] **v0.1** Architecture: content script / background / matcher / cache / rate limiting
-- [x] **v0.2** Real end-to-end: Netflix adapter, Douban data path, quota discipline, extension coexistence
-- [x] **v0.2.1** Clicks signal interest: spend the tight quota on titles the user opened
-- [x] **v0.3** IMDb ratings alongside Douban: source layer, two independent queues, multi-segment badge, cross-script matching
-- [ ] **v0.4** Prime Video support (already structured as multi-site adapters — only `src/content/primevideo/` is needed)
-- [ ] Remove the temporary diagnostics page (`src/probe/`)
-- [ ] Revisit publishing once the IMDb licensing question is resolved
