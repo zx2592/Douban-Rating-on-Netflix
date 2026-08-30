@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
 import { cleanTitle, extractFromCard, extractFromModal, queryIdentity } from '../src/content/netflix/extract';
-import { NETFLIX_SELECTORS, queryFirst, readFirstText } from '../src/content/netflix/selectors';
+import { queryFirst, readFirstText } from '../src/content/dom';
+import { NETFLIX_SELECTORS } from '../src/content/netflix/selectors';
 import { normalizeTitle } from '../src/shared/text';
 
 /**

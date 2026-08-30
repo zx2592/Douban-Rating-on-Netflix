@@ -1,6 +1,7 @@
 import { splitSeason } from '../../shared/text';
 import type { MediaQuery } from '../../shared/types';
-import { NETFLIX_SELECTORS, queryFirst, readFirstText } from './selectors';
+import { queryFirst, readFirstText } from '../dom';
+import { NETFLIX_SELECTORS } from './selectors';
 
 /** 零宽字符和多余空白会让归一化后的标题对不上，先清干净。 */
 function collapseWhitespace(text: string): string {

@@ -79,7 +79,8 @@ async function handle(request: ExtensionRequest): Promise<ExtensionResponse> {
       // 等退避状态恢复完再放行，否则冷启动后的头几个请求会绕过退避。
       await backoffRestored;
       const settings = await loadSettings();
-      const active = settings.enabled && settings.sites.netflix;
+      // 分站点开关：关掉的站点不产生任何请求，不只是不显示。
+      const active = settings.enabled && settings.sites[request.site];
 
       // 两个来源并行查。它们走各自的队列，谁也不用等谁 —— 串行的话
       // 一张卡片要等两条队列依次排完，出分速度直接砍半。

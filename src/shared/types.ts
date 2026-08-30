@@ -12,6 +12,9 @@ export interface MediaQuery {
   season?: number;
 }
 
+/** 支持的流媒体站点。 */
+export type SiteId = 'netflix' | 'primevideo';
+
 /** 评分来源。加新站点时在这里扩展。 */
 export type RatingSource = 'douban' | 'imdb';
 

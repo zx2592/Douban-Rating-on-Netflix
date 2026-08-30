@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "豆瓣 & IMDb 评分 for Netflix",
-  "version": "0.3.0",
-  "description": "在 Netflix 的影片封面和详情页旁并排显示豆瓣与 IMDb 评分，点击可跳转对应条目。",
+  "name": "豆瓣 & IMDb 评分",
+  "version": "0.4.0",
+  "description": "在 Netflix 与 Prime Video 的影片封面旁并排显示豆瓣与 IMDb 评分，点击可跳转对应条目。",
   "minimum_chrome_version": "110",
   "permissions": [
     "storage"
@@ -30,11 +30,23 @@
         "badge.css"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.primevideo.com/*"
+      ],
+      "js": [
+        "content-primevideo.js"
+      ],
+      "css": [
+        "badge.css"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "豆瓣 & IMDb 评分 for Netflix",
+    "default_title": "豆瓣 & IMDb 评分",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",

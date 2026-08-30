@@ -12,6 +12,8 @@ const controls = {
   showOnCards: byId<HTMLInputElement>('showOnCards'),
   showOnDetail: byId<HTMLInputElement>('showOnDetail'),
   showUnrated: byId<HTMLInputElement>('showUnrated'),
+  siteNetflix: byId<HTMLInputElement>('siteNetflix'),
+  sitePrimevideo: byId<HTMLInputElement>('sitePrimevideo'),
   sourceDouban: byId<HTMLInputElement>('sourceDouban'),
   sourceImdb: byId<HTMLInputElement>('sourceImdb'),
   badgePosition: byId<HTMLSelectElement>('badgePosition'),
@@ -26,6 +28,8 @@ function render(settings: Settings): void {
   controls.showOnCards.checked = settings.showOnCards;
   controls.showOnDetail.checked = settings.showOnDetail;
   controls.showUnrated.checked = settings.showUnrated;
+  controls.siteNetflix.checked = settings.sites.netflix;
+  controls.sitePrimevideo.checked = settings.sites.primevideo;
   controls.sourceDouban.checked = settings.sources.douban;
   controls.sourceImdb.checked = settings.sources.imdb;
   controls.badgePosition.value = settings.badgePosition;
@@ -64,6 +68,12 @@ controls.enabled.addEventListener('change', () => void update({ enabled: control
 controls.showOnCards.addEventListener('change', () => void update({ showOnCards: controls.showOnCards.checked }));
 controls.showOnDetail.addEventListener('change', () => void update({ showOnDetail: controls.showOnDetail.checked }));
 controls.showUnrated.addEventListener('change', () => void update({ showUnrated: controls.showUnrated.checked }));
+// 站点开关关掉即不在那个站点注入任何东西。
+const syncSites = (): Promise<void> =>
+  update({ sites: { netflix: controls.siteNetflix.checked, primevideo: controls.sitePrimevideo.checked } });
+controls.siteNetflix.addEventListener('change', () => void syncSites());
+controls.sitePrimevideo.addEventListener('change', () => void syncSites());
+
 // 来源开关关掉即不再为它发请求，不只是隐藏显示。
 controls.sourceDouban.addEventListener('change', () =>
   void update({ sources: { douban: controls.sourceDouban.checked, imdb: controls.sourceImdb.checked } }),
