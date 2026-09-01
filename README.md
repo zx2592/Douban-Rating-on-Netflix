@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/version-0.4.0-2e963d" alt="version 0.4.0">
   <img src="https://img.shields.io/badge/Manifest-V3-4285F4" alt="Manifest V3">
   <img src="https://img.shields.io/badge/Chrome-110%2B-4285F4" alt="Chrome 110+">
-  <img src="https://img.shields.io/badge/tests-369%20passing-2e963d" alt="369 tests passing">
+  <img src="https://img.shields.io/badge/tests-390%20passing-2e963d" alt="390 tests passing">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6" alt="TypeScript strict">
 </p>
 
@@ -78,11 +78,17 @@ npm run build
 
 | 现象 | 怎么办 |
 | --- | --- |
-| 完全没有角标 | 先确认跑的是哪一版（见下）；再看 Console 有没有「没有找到任何影片卡片」的警告——那说明 Netflix 改版了 |
+| 完全没有角标 | **先分清是哪一种**：Console 里执行 `document.documentElement.dataset.dbrLoaded`。有值 = 脚本注入了，去看有没有「没有找到任何影片卡片」的警告（那是选择器失效）；**是 `undefined` = 脚本根本没注入**，见下方「脚本没注入」 |
 | 只有少数片有评分 | 正常，见上方「四个预期」。等缓存积累 |
 | 角标里出现奇怪的文字 | 多半是别的扩展（如翻译类）在改 DOM，见「和其它扩展共存」 |
 | 评分明显配错了片 | 这是真 bug。点扩展图标 →「检索接口诊断」→ 用「单片排查」输入片名，把输出发给开发者 |
 | 弹窗显示橙色限流提示 | 等提示里给出的时间，期间扩展会自动停止请求 |
+
+**脚本没注入（`dbrLoaded` 是 `undefined`）。** 这和「选择器失效」是两回事，页面上没有任何线索能区分——脚本没跑起来的话，连那条 Console 警告都不会有。按这个顺序查：
+
+1. **换个站点试。** 在 Netflix 上也执行一次 `document.documentElement.dataset.dbrLoaded`。Netflix 有值而这个站点没有 → 是 manifest 的匹配规则没覆盖当前域名；两个都没有 → 扩展本身没加载或没重新构建。
+2. **看当前 URL。** Prime Video 的投放形态有两类：独立站点 `primevideo.com`，以及各区域 amazon 站点下的 `/gp/video/` 路径。manifest 里两类都写了，但 amazon 的域名是逐个列举的（`.com` / `.co.jp` / `.de` …），你所在的区域站可能不在名单里。把 URL 发回来，或者直接往 `manifest.json` 的 `content_scripts` 里加一行。
+3. **注意裸域名。** `https://www.primevideo.com/*` 这样的写法**匹配不到**不带 `www` 的 `primevideo.com`——必须写成 `https://*.primevideo.com/*`。这个坑已经踩过一次，现在有 `tests/manifest.test.ts` 守着。
 
 **先确认跑的是哪一版。** `npm run build` 会打印一个版本戳，内容脚本把同一个戳写在 `<html data-dbr-loaded>` 上。在 Netflix 页面的 Console 里执行 `document.documentElement.dataset.dbrLoaded`，两者一致才说明新代码真的生效了。
 
@@ -353,7 +359,7 @@ src/
 | --- | --- |
 | `npm run build` | 打包到 `dist/`，并打印版本戳 |
 | `npm run watch` | 监听源码变化持续重建 |
-| `npm test` | 跑单测（369 个用例） |
+| `npm test` | 跑单测（390 个用例） |
 | `npm run typecheck` | TypeScript 类型检查 |
 | `npm run check` | 类型检查 + 测试 + 构建，提交前跑这个 |
 | `npm run icons` | 重新生成 `icons/` 下的 PNG 图标 |

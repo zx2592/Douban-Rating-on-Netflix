@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/version-0.4.0-2e963d" alt="version 0.4.0">
   <img src="https://img.shields.io/badge/Manifest-V3-4285F4" alt="Manifest V3">
   <img src="https://img.shields.io/badge/Chrome-110%2B-4285F4" alt="Chrome 110+">
-  <img src="https://img.shields.io/badge/tests-369%20passing-2e963d" alt="369 tests passing">
+  <img src="https://img.shields.io/badge/tests-390%20passing-2e963d" alt="390 tests passing">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6" alt="TypeScript strict">
 </p>
 
@@ -81,11 +81,17 @@ The popup footer shows cached entry counts per source and how many titles are on
 
 | Symptom | What to do |
 | --- | --- |
-| No badges at all | First check which build is running (below); then look for the "no title cards found" warning in the console — that means Netflix changed its DOM |
+| No badges at all | **First tell the two cases apart**: run `document.documentElement.dataset.dbrLoaded` in the console. A value means the script was injected — look for the "no title cards found" warning next (that's a selector failure). **`undefined` means the script never ran at all** — see "The script wasn't injected" below |
 | Only a few titles have ratings | Normal — see "What to expect". Let the cache build up |
 | Odd text inside the badge | Usually another extension (a translator) mutating the DOM. See "Coexisting with other extensions" |
 | A rating is clearly on the wrong title | That's a real bug. Extension icon → "Search endpoint diagnostics" → use "Single title trace", and send the output |
 | Amber rate-limit notice in the popup | Wait for the time it shows; the extension stops issuing requests until then |
+
+**The script wasn't injected (`dbrLoaded` is `undefined`).** This is a different failure from "the selectors stopped matching", and the page gives you nothing to tell them apart — if the script never ran, not even the console warning appears. Check in this order:
+
+1. **Try the other site.** Run the same expression on Netflix. A value there but not here means the manifest's match patterns don't cover the current domain; nothing on either means the extension isn't loaded or wasn't rebuilt.
+2. **Look at the URL.** Prime Video ships in two shapes: the standalone `primevideo.com`, and `/gp/video/` paths on regional amazon domains. Both are in the manifest, but the amazon domains are enumerated one by one (`.com` / `.co.jp` / `.de` …) and your region may not be on the list. Send the URL, or just add a line to `content_scripts` in `manifest.json`.
+3. **Mind the bare domain.** A pattern like `https://www.primevideo.com/*` does **not** match `primevideo.com` without the `www` — it has to be `https://*.primevideo.com/*`. That trap has been hit once already; `tests/manifest.test.ts` now guards it.
 
 **Check which build is actually running.** `npm run build` prints a build stamp, and the content script writes the same stamp onto `<html data-dbr-loaded>`. Run `document.documentElement.dataset.dbrLoaded` in the console on a Netflix page — only if they match is your new code actually live.
 
@@ -357,7 +363,7 @@ src/
 | --- | --- |
 | `npm run build` | Bundle into `dist/` and print the build stamp |
 | `npm run watch` | Rebuild on source changes |
-| `npm test` | Unit tests (369 cases) |
+| `npm test` | Unit tests (390 cases) |
 | `npm run typecheck` | TypeScript check |
 | `npm run check` | Typecheck + tests + build. Run this before committing |
 | `npm run icons` | Regenerate the PNGs under `icons/` |
