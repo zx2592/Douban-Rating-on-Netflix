@@ -136,6 +136,67 @@
   }
   say('');
 
+  // ------------------------------------------ 命中与未命中的卡片，差在哪里
+  //
+  // 这一节是为「部分卡片出分、部分不出」这个具体现象加的，也是这类问题最快
+  // 的诊断路径：与其猜哪个选择器不对，不如直接把「成功的那张」和「失败的
+  // 那张」摆在一起比。差异往往一眼可见 —— 不同的行用了不同的卡片组件、
+  // 标题挂在不同的属性上、或者封面图的包裹层数不一样。
+  const CARD_SELECTOR = 'a[href*="/detail/"], a[href*="/gp/video/detail/"]';
+  const cards = [...document.querySelectorAll(CARD_SELECTOR)];
+  const withBadge = cards.filter((el) => el.querySelector('.dbr-badge'));
+  const withoutBadge = cards.filter((el) => !el.querySelector('.dbr-badge'));
+
+  say('===== 出分情况 =====');
+  say(`  选择器命中的卡片   ${cards.length}`);
+  say(`  其中已挂上角标     ${withBadge.length}`);
+  say(`  其中没有角标       ${withoutBadge.length}`);
+  // 扩展给处理过的卡片打了身份标记；有标记却没角标，说明「查过但没结果」，
+  // 和「压根没被扫到」是两回事，修法完全不同。
+  const marked = cards.filter((el) => el.hasAttribute('data-dbr-identity'));
+  say(`  被扫描器处理过的   ${marked.length}（有 data-dbr-identity 标记）`);
+  say(`  页面上的角标总数   ${document.querySelectorAll('.dbr-badge').length}`);
+  say('');
+
+  const dumpCard = (el, label) => {
+    say(`  ── ${label}`);
+    say('     href    ', trunc(el.getAttribute('href'), 90));
+    say('     卡片自身', describe(el));
+    say('     身份标记', el.getAttribute('data-dbr-identity') ?? '(无 —— 没被扫描器处理过)');
+    // 标题候选：和 selectors.ts 里那份清单一一对应，看哪一条能取到东西。
+    const sources = [
+      [':self aria-label', el.getAttribute('aria-label')],
+      ['img[alt]', el.querySelector('img')?.getAttribute('alt')],
+      ['[data-automation-id*=title]', el.querySelector('[data-automation-id*="title"]')?.textContent],
+      ['[data-testid*=title]', el.querySelector('[data-testid*="title"]')?.textContent],
+      ['文本内容', el.textContent],
+    ];
+    for (const [name, value] of sources) {
+      say(`     ${name.padEnd(28)} ${value ? trunc(value, 60) : '(空)'}`);
+    }
+    const img = el.querySelector('img');
+    say('     封面图  ', img ? describe(img) : '(链接里没有 img)');
+    say('     图的父层', img ? describe(img.parentElement) : '(无)');
+    say('     角标落点', el.querySelector('div:has(> img)') ? '解析得到' : '解析不到，会退回整张卡片');
+    let node = el.parentElement;
+    for (let d = 1; d <= 3 && node; d += 1) {
+      say(`     祖先 +${d} `, describe(node));
+      node = node.parentElement;
+    }
+  };
+
+  if (withBadge.length > 0 && withoutBadge.length > 0) {
+    say('===== 成功 vs 失败 的卡片对比（关键）=====');
+    for (const el of withBadge.slice(0, 2)) dumpCard(el, '✅ 有角标');
+    say('');
+    for (const el of withoutBadge.slice(0, 3)) dumpCard(el, '❌ 没角标');
+    say('');
+  } else if (withoutBadge.length > 0) {
+    say('===== 没有任何角标，抽查几张卡片 =====');
+    for (const el of withoutBadge.slice(0, 3)) dumpCard(el, '❌ 没角标');
+    say('');
+  }
+
   // ---------------------------------------------------- 详情页/详情层的线索
   say('===== 详情区域 =====');
   const detailHints = [

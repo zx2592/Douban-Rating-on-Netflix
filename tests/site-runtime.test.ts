@@ -202,6 +202,86 @@ describe('主循环对任意站点都成立', () => {
   });
 });
 
+describe('暂时性失败要能重试', () => {
+  /**
+   * 卡片处理过就会 unobserve，所以查询失败之后它不会再被触发 —— 用户不滚走
+   * 再滚回来，那张封面就永远空着。而失败原因常常只是暂时的：请求队列满了
+   * （密集的列表页一屏就能塞满 40 个待查）、对方在限流、网络抖了一下。
+   * 实际现象就是「一大片卡片一直不出分，刷新也没用」。
+   */
+  it('全部来源都只回暂时性错误时，卡片会被放回观察', async () => {
+    let attempt = 0;
+    (globalThis as unknown as { chrome: { runtime: { sendMessage: unknown } } }).chrome.runtime.sendMessage =
+      vi.fn(async (request: ExtensionRequest): Promise<ExtensionResponse> => {
+        if (request.kind !== 'lookup') return { kind: 'interest', recorded: true };
+        lookups.push({ query: request.query, site: request.site });
+        attempt += 1;
+        // 第一次失败，第二次成功 —— 模拟队列腾出空位。
+        return attempt === 1
+          ? { kind: 'lookup', outcome: { douban: { status: 'error', reason: '请求队列已满' }, imdb: { status: 'disabled' } } }
+          : { kind: 'lookup', outcome: { douban: { status: 'ok', rating: RATING }, imdb: { status: 'disabled' } } };
+      });
+
+    document.body.innerHTML = CARD;
+    await startFakeSite();
+    scrollIntoView();
+    await settle(800);
+
+    expect(lookups).toHaveLength(1);
+    expect(document.querySelector('.dbr-badge')).toBeNull();
+
+    // 等过重试延迟，卡片重新进入观察后再次驻留。
+    await settle(4500);
+    scrollIntoView();
+    await settle(800);
+
+    expect(lookups).toHaveLength(2);
+    expect(document.querySelector('.dbr-value')?.textContent).toBe('8.1');
+  }, 15000);
+
+  it('「未收录」不是暂时性失败，不重试', async () => {
+    // 未收录是一个确定的结论，重试只会白花配额。
+    (globalThis as unknown as { chrome: { runtime: { sendMessage: unknown } } }).chrome.runtime.sendMessage =
+      vi.fn(async (request: ExtensionRequest): Promise<ExtensionResponse> => {
+        if (request.kind !== 'lookup') return { kind: 'interest', recorded: true };
+        lookups.push({ query: request.query, site: request.site });
+        return { kind: 'lookup', outcome: { douban: { status: 'not_found' }, imdb: { status: 'disabled' } } };
+      });
+
+    document.body.innerHTML = CARD;
+    await startFakeSite();
+    scrollIntoView();
+    await settle(800);
+    expect(lookups).toHaveLength(1);
+
+    await settle(4500);
+    scrollIntoView();
+    await settle(800);
+    expect(lookups).toHaveLength(1);
+  }, 15000);
+
+  it('重试次数有上限，不会变成自旋的请求风暴', async () => {
+    // 配额被打穿时无限重试比不显示糟得多。
+    (globalThis as unknown as { chrome: { runtime: { sendMessage: unknown } } }).chrome.runtime.sendMessage =
+      vi.fn(async (request: ExtensionRequest): Promise<ExtensionResponse> => {
+        if (request.kind !== 'lookup') return { kind: 'interest', recorded: true };
+        lookups.push({ query: request.query, site: request.site });
+        return { kind: 'lookup', outcome: { douban: { status: 'error', reason: '一直失败' }, imdb: { status: 'disabled' } } };
+      });
+
+    document.body.innerHTML = CARD;
+    await startFakeSite();
+    for (let round = 0; round < 5; round += 1) {
+      scrollIntoView();
+      await settle(800);
+      await settle(4500);
+    }
+
+    // 首次 + 最多 2 次重试。
+    expect(lookups.length).toBeLessThanOrEqual(3);
+  }, 40000);
+});
+
 describe('没有详情弹层的站点', () => {
   it('modal 为空数组时不去找详情层', async () => {
     // Prime Video 的详情是整页跳转而不是弹层。给空数组时主循环必须跳过，

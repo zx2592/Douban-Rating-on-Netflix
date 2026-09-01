@@ -151,6 +151,21 @@ function toBadgeParts(outcome: RatingsOutcome, showUnrated: boolean): BadgePart[
 const inViewport = new WeakSet<Element>();
 /** 已排上驻留计时的卡片，避免同一张卡反复计时。 */
 const dwelling = new WeakSet<Element>();
+/**
+ * 因暂时性失败重试过几次。
+ *
+ * 卡片一旦处理过就会 unobserve，所以查询失败之后它不会再被触发 —— 用户
+ * 不滚走再滚回来，这张封面就永远空着。而失败原因常常只是暂时的：请求队列
+ * 满了（密集的列表页一屏就能塞满 40 个待查）、对方在限流、网络抖了一下。
+ * 把这类失败重新排回观察，是「有很多卡片一直没分」的直接解药。
+ *
+ * 用 WeakMap 计数并设上限：无限重试会在配额被打穿时变成一个自旋的请求风暴，
+ * 那比不显示糟得多。
+ */
+const retries = new WeakMap<Element, number>();
+const MAX_RETRIES = 2;
+/** 暂时性失败后隔多久把卡片放回观察。对方给了建议时间就听它的。 */
+const RETRY_BASE_MS = 4000;
 
 const viewportObserver = new IntersectionObserver(
   (entries) => {
@@ -217,14 +232,59 @@ async function processCard(card: HTMLElement): Promise<void> {
     return;
   }
 
+  // 开着的来源全都只回了暂时性错误 —— 这张卡片这轮什么都拿不到，但它
+  // 不是「没有分」，只是「这次没查成」。放回观察，过一会儿再试。
+  const transient = enabledSourcesFailed(outcome);
+  if (transient !== null) {
+    scheduleRetry(card, transient);
+    removeBadge(card);
+    return;
+  }
+
   const parts = toBadgeParts(outcome, settings.showUnrated);
   if (parts.length === 0) {
     removeBadge(card);
     return;
   }
+  // 拿到结果了，重试计数归零：下次再失败时它还有完整的重试额度。
+  retries.delete(card);
   // 传整张卡片作为去重范围：anchor 的解析结果会随 Netflix 重渲染漂移，
   // 不跨挂载点清理就会出现两个角标叠在封面同一个角上。
   upsertBadge(anchor, { variant: 'card', position: settings.badgePosition, identity, parts }, card);
+}
+
+/**
+ * 开着的来源是不是全都只回了暂时性错误。
+ *
+ * 返回建议的重试延迟；只要有任何一个来源给出了确定的结果（有分 / 未收录），
+ * 就返回 null —— 那不是失败，页面上该显示的已经显示了。
+ */
+function enabledSourcesFailed(outcome: RatingsOutcome): number | null {
+  let retryAfter = 0;
+  let sawError = false;
+  for (const source of SOURCE_ORDER) {
+    const result = outcome[source];
+    // disabled 的来源不参与判断：用户主动关掉的，不该拖着整张卡片重试。
+    if (result.status === 'disabled') continue;
+    if (result.status !== 'error') return null;
+    sawError = true;
+    retryAfter = Math.max(retryAfter, result.retryAfterMs ?? 0);
+  }
+  return sawError ? Math.max(retryAfter, RETRY_BASE_MS) : null;
+}
+
+/** 把卡片放回视口观察，等它再次触发驻留判定。 */
+function scheduleRetry(card: HTMLElement, delayMs: number): void {
+  const used = retries.get(card) ?? 0;
+  if (used >= MAX_RETRIES) return;
+  retries.set(card, used + 1);
+
+  setTimeout(() => {
+    if (stopped || !card.isConnected) return;
+    // 重新观察即可：真正要不要发请求，仍然由驻留判定说了算 ——
+    // 用户早就滚走的卡片不会因为这次重试而白花配额。
+    viewportObserver.observe(card);
+  }, delayMs);
 }
 
 async function processModal(modal: HTMLElement): Promise<void> {
