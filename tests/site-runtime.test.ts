@@ -202,6 +202,63 @@ describe('主循环对任意站点都成立', () => {
   });
 });
 
+describe('诊断标记', () => {
+  /**
+   * 这两组标记只为排查而写，不参与任何逻辑 —— 但它们值得有用例守着，
+   * 因为它们失真的代价很具体：诊断脚本自带一份选择器时，扩展改了选择器
+   * 之后报告说「被扫描器处理过 21 张」，真实数字是 179。失真的报告比没有
+   * 报告更糟，它把排查引向了根本不存在的问题。
+   */
+  it('把实际在用的选择器挂到 <html> 上，供诊断脚本读取', async () => {
+    await startFakeSite();
+    expect(document.documentElement.getAttribute('data-dbr-cards')).toBe('article[data-film]');
+    expect(document.documentElement.getAttribute('data-dbr-anchors')).toBe('div.poster');
+  });
+
+  it('卡片状态区分「在等视口」和「查过没结果」', async () => {
+    // 光看 DOM 的话两者都是「有身份标记、没有角标」，但修法完全不同。
+    document.body.innerHTML = CARD;
+    await startFakeSite();
+
+    const card = document.querySelector('article')!;
+    expect(card.getAttribute('data-dbr-state')).toBe('pending');
+
+    scrollIntoView();
+    await settle(800);
+    expect(card.getAttribute('data-dbr-state')).toBe('ok');
+  });
+
+  it('两边都没有结果时标成 missing，不是 error', async () => {
+    (globalThis as unknown as { chrome: { runtime: { sendMessage: unknown } } }).chrome.runtime.sendMessage =
+      vi.fn(async (request: ExtensionRequest): Promise<ExtensionResponse> => {
+        if (request.kind !== 'lookup') return { kind: 'interest', recorded: true };
+        return { kind: 'lookup', outcome: { douban: { status: 'not_found' }, imdb: { status: 'not_found' } } };
+      });
+
+    document.body.innerHTML = CARD;
+    await startFakeSite();
+    scrollIntoView();
+    await settle(800);
+
+    expect(document.querySelector('article')!.getAttribute('data-dbr-state')).toBe('missing');
+  });
+
+  it('暂时性失败标成 error', async () => {
+    (globalThis as unknown as { chrome: { runtime: { sendMessage: unknown } } }).chrome.runtime.sendMessage =
+      vi.fn(async (request: ExtensionRequest): Promise<ExtensionResponse> => {
+        if (request.kind !== 'lookup') return { kind: 'interest', recorded: true };
+        return { kind: 'lookup', outcome: { douban: { status: 'error', reason: '队列已满' }, imdb: { status: 'disabled' } } };
+      });
+
+    document.body.innerHTML = CARD;
+    await startFakeSite();
+    scrollIntoView();
+    await settle(800);
+
+    expect(document.querySelector('article')!.getAttribute('data-dbr-state')).toBe('error');
+  });
+});
+
 describe('暂时性失败要能重试', () => {
   /**
    * 卡片处理过就会 unobserve，所以查询失败之后它不会再被触发 —— 用户不滚走

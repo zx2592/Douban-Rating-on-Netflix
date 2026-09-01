@@ -142,7 +142,16 @@
   // 的诊断路径：与其猜哪个选择器不对，不如直接把「成功的那张」和「失败的
   // 那张」摆在一起比。差异往往一眼可见 —— 不同的行用了不同的卡片组件、
   // 标题挂在不同的属性上、或者封面图的包裹层数不一样。
-  const CARD_SELECTOR = 'a[href*="/detail/"], a[href*="/gp/video/detail/"]';
+  // 优先用扩展自己挂在 <html> 上的那份选择器。
+  //
+  // 这一条是踩出来的：脚本原先自带一份路由选择器，扩展改成认卡片容器之后
+  // 两边就脱节了 —— 报告说「被扫描器处理过 21 张」，真实数字是 179，
+  // 因为脚本只数了 <a>，看不到 <article> 容器。失真的报告比没有报告更糟，
+  // 它会把排查引向根本不存在的问题。
+  const EXT_SELECTOR = document.documentElement.getAttribute('data-dbr-cards');
+  const EXT_ANCHORS = document.documentElement.getAttribute('data-dbr-anchors');
+  const CARD_SELECTOR = EXT_SELECTOR || 'a[href*="/detail/"], a[href*="/gp/video/detail/"]';
+  say(`（卡片选择器来源：${EXT_SELECTOR ? '扩展实际在用的那份' : '脚本内置的兜底 —— 扩展未注入或版本过旧'}）`);
   const cards = [...document.querySelectorAll(CARD_SELECTOR)];
   const withBadge = cards.filter((el) => el.querySelector('.dbr-badge'));
   const withoutBadge = cards.filter((el) => !el.querySelector('.dbr-badge'));
@@ -156,6 +165,26 @@
   const marked = cards.filter((el) => el.hasAttribute('data-dbr-identity'));
   say(`  被扫描器处理过的   ${marked.length}（有 data-dbr-identity 标记）`);
   say(`  页面上的角标总数   ${document.querySelectorAll('.dbr-badge').length}`);
+  say('');
+
+  // 按状态拆开。这是回答「为什么很多卡片没有评分」的关键：
+  // pending 多 = 它们还没进视口，属于设计如此（省配额），不是 bug；
+  // missing 多 = 查过了但两边都没有，那是匹配或收录的问题；
+  // error 多  = 被限流或队列满，属于配额问题。
+  const STATES = [
+    ['pending', '已发现，在等进入视口（设计如此，不是 bug）'],
+    ['querying', '正在查询'],
+    ['ok', '查到了评分'],
+    ['missing', '查过了，两边都没有'],
+    ['error', '暂时性失败（限流 / 队列满），会自动重试'],
+  ];
+  say('  按状态拆开：');
+  for (const [state, label] of STATES) {
+    const n = document.querySelectorAll(`[data-dbr-state="${state}"]`).length;
+    say(`    ${state.padEnd(9)} ${String(n).padStart(4)}  ${label}`);
+  }
+  const noState = document.querySelectorAll('[data-dbr-identity]:not([data-dbr-state])').length;
+  if (noState > 0) say(`    (无状态)  ${String(noState).padStart(4)}  扩展版本过旧，没有写状态标记`);
   say('');
 
   const dumpCard = (el, label) => {
@@ -177,7 +206,10 @@
     const img = el.querySelector('img');
     say('     封面图  ', img ? describe(img) : '(链接里没有 img)');
     say('     图的父层', img ? describe(img.parentElement) : '(无)');
-    say('     角标落点', el.querySelector('div:has(> img)') ? '解析得到' : '解析不到，会退回整张卡片');
+    // 用扩展实际在用的落点选择器，而不是脚本里写死的一条。
+    const anchorHit = EXT_ANCHORS ? el.querySelector(EXT_ANCHORS) : el.querySelector('div:has(> img)');
+    say('     角标落点', anchorHit ? `解析得到 ${describe(anchorHit)}` : '解析不到，会退回整张卡片');
+    say('     状态    ', el.getAttribute('data-dbr-state') ?? '(无)');
     let node = el.parentElement;
     for (let d = 1; d <= 3 && node; d += 1) {
       say(`     祖先 +${d} `, describe(node));

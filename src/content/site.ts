@@ -43,6 +43,20 @@ export interface SiteAdapter {
 }
 
 const IDENTITY_ATTR = 'data-dbr-identity';
+/**
+ * 每张卡片当前走到哪一步。只为诊断而写，不参与任何逻辑。
+ *
+ * 加它的原因很具体：排查「为什么很多卡片没有评分」时，光看 DOM 分不清
+ * 「压根没进视口所以没查」和「查了但没结果」—— 两者都表现为「有身份标记、
+ * 没有角标」，而修法完全不同。有了这个标记，一份诊断报告就能直接给出
+ * 「多少张在等视口 / 多少张查到了 / 多少张未收录」。
+ */
+const STATE_ATTR = 'data-dbr-state';
+type CardState = 'pending' | 'querying' | 'ok' | 'missing' | 'error';
+
+function setState(card: HTMLElement, state: CardState): void {
+  card.setAttribute(STATE_ATTR, state);
+}
 /** DOM 变动的合并窗口。滚动时变动非常密集，扫太勤会拖慢页面。 */
 const SCAN_DEBOUNCE_MS = 250;
 /** 提前于视口这么多像素开始查询，让用户滚到时评分已经就位。 */
@@ -198,6 +212,7 @@ const viewportObserver = new IntersectionObserver(
         if (!inViewport.has(card) || !card.isConnected) return;
         viewportObserver.unobserve(card);
         inViewport.delete(card);
+        setState(card, 'querying');
         void processCard(card);
       }, DWELL_MS);
     }
@@ -236,6 +251,7 @@ async function processCard(card: HTMLElement): Promise<void> {
   // 不是「没有分」，只是「这次没查成」。放回观察，过一会儿再试。
   const transient = enabledSourcesFailed(outcome);
   if (transient !== null) {
+    setState(card, 'error');
     scheduleRetry(card, transient);
     removeBadge(card);
     return;
@@ -243,9 +259,12 @@ async function processCard(card: HTMLElement): Promise<void> {
 
   const parts = toBadgeParts(outcome, settings.showUnrated);
   if (parts.length === 0) {
+    // 两边都查过了，确实没有可信结果 —— 这是结论，不是失败。
+    setState(card, 'missing');
     removeBadge(card);
     return;
   }
+  setState(card, parts.some((part) => part.state.kind === 'rated') ? 'ok' : 'missing');
   // 拿到结果了，重试计数归零：下次再失败时它还有完整的重试额度。
   retries.delete(card);
   // 传整张卡片作为去重范围：anchor 的解析结果会随 Netflix 重渲染漂移，
@@ -382,6 +401,8 @@ function scan(): void {
 
       removeBadge(card);
       card.setAttribute(IDENTITY_ATTR, identity);
+      // pending = 已发现、在等进入视口。和「查过但没结果」是两回事。
+      setState(card, 'pending');
       viewportObserver.observe(card);
     }
   }
@@ -412,6 +433,14 @@ function removeAllBadges(): void {
 export async function startSite(next: SiteAdapter): Promise<void> {
   adapter = next;
   stopped = false;
+
+  // 把实际在用的选择器挂到 <html> 上，供 scripts/dom-probe.js 读取。
+  // 诊断脚本跑在页面里、拿不到扩展的模块，如果让它自己维护一份选择器，
+  // 两边必然会脱节 —— 实测就发生过：扩展早就改了卡片选择器，脚本还在用
+  // 旧的那条，于是报告里「被扫描器处理过 21 张」，而真实数字是 179。
+  // 报告失真比没有报告更糟，它会把排查引向不存在的问题。
+  document.documentElement.setAttribute('data-dbr-cards', joinSelectors(adapter.card));
+  document.documentElement.setAttribute('data-dbr-anchors', joinSelectors(adapter.cardAnchor));
   try {
     settings = await loadSettings();
   } catch (error) {
