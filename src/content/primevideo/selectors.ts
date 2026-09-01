@@ -34,6 +34,12 @@ const NOT_A_CARD = [
   // hero 区域的整幅背景图链接。它和 hero 的其它链接指向同一部片，而且里面
   // 没有 <img>，角标会落到整块背景的左上角；hero 还会自动轮播，角标跟着抖。
   '[data-testid="image-link"]',
+  // 卡片容器内部的链接。实测一张卡片是
+  //   <article data-card-title="…"><div data-testid="packshot"><a href="/detail/…">
+  // 容器和内部链接都命中的话，同一部片会被当成两张卡片各处理一遍 ——
+  // 实测页面上 170 张卡片留下了 327 个身份标记，正是这么来的。
+  // 容器信息更全（有片名、有类型、有封面容器），所以留容器、去掉内部链接。
+  '[data-card-title] *',
   // 注意用逗号连成「选择器列表」而不是直接拼接 —— 拼接出来是复合选择器
   // `:not(a[x][y])`，含义变成「不同时满足 x 和 y」，等于什么都没排除。
 ].join(', ');
@@ -46,8 +52,9 @@ export const PRIMEVIDEO_SELECTORS = {
    * 「长得像卡片的东西」排除掉，否则会把播放按钮也当成影片。
    */
   card: [
-    'a[data-testid="poster-link"]',
+    // 卡片容器排第一：它同时带着片名和类型，信息最全。
     '[data-card-title]',
+    `a[data-testid="poster-link"]:not(${NOT_A_CARD})`,
     `a[href*="/detail/"]:not(${NOT_A_CARD})`,
     `a[href*="/gp/video/detail/"]:not(${NOT_A_CARD})`,
   ],
@@ -77,11 +84,24 @@ export const PRIMEVIDEO_SELECTORS = {
    * 角标于是跑到了卡片左上角而不是封面左上角。
    */
   cardAnchor: [
+    // 实测的封面容器。卡片结构是
+    //   <article data-card-title><section data-testid="card-section">
+    //     <div data-testid="packshot"><a …>
+    '[data-testid="packshot"]',
     'div:has(> picture)',
     'picture',
     'div:has(> img)',
     'div:has(img)',
   ],
+
+  /**
+   * 卡片上的类型标记。实测值形如 `data-card-entity-type="Movie"`。
+   *
+   * 这是意外的收获：在此之前列表卡片一律只能发 type: 'unknown'，匹配器
+   * 因此拿不到消歧信号。有了它，同名的电影和剧集能分开，IMDb 那边的跨语种
+   * 回退（要求类型相容）也才真正有依据。
+   */
+  cardType: [{ selector: ':self', attr: 'data-card-entity-type' }, { selector: ':closest([data-card-entity-type])', attr: 'data-card-entity-type' }] satisfies TextSource[],
 
   /**
    * 详情页的标题。

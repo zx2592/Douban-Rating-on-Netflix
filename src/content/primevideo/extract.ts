@@ -1,7 +1,7 @@
 import { queryFirst, readFirstText } from '../dom';
 import { cleanTitle } from '../netflix/extract';
 import { splitSeason } from '../../shared/text';
-import type { MediaQuery } from '../../shared/types';
+import type { MediaQuery, MediaType } from '../../shared/types';
 import { DETAIL_ROUTE, PRIMEVIDEO_SELECTORS } from './selectors';
 
 /**
@@ -11,6 +11,23 @@ import { DETAIL_ROUTE, PRIMEVIDEO_SELECTORS } from './selectors';
  * 摘掉括号里的年份、剥掉包裹整个标题的引号 —— 这些处理和站点无关，
  * 而且每一条都是从真实数据里长出来的，没有理由再写一份。
  */
+
+/**
+ * 把 Prime Video 的 `data-card-entity-type` 归到我们的三种类型。
+ *
+ * 实测值形如 `"Movie"`。剧集侧的确切取值还没见到，所以用「包含」判断而不是
+ * 等值判断 —— 猜错一个字面量会让所有剧集掉回 unknown，而包含判断最差也只是
+ * 回到原来的水平。
+ */
+export function mediaTypeFromEntity(value: string | null): MediaType {
+  const text = (value ?? '').toLowerCase();
+  if (!text) return 'unknown';
+  if (text.includes('movie') || text.includes('film')) return 'movie';
+  if (text.includes('tv') || text.includes('show') || text.includes('series') || text.includes('season')) {
+    return 'tv';
+  }
+  return 'unknown';
+}
 
 /** 当前是不是详情页。用 URL 判断，不靠 DOM 猜。 */
 export function isDetailPage(url: string = location.pathname + location.search): boolean {
@@ -47,9 +64,12 @@ export function extractFromCard(card: HTMLElement): MediaQuery | null {
   if (!cleaned.title) return null;
 
   const season = splitSeason(cleaned.title).season;
+  // 列表卡片上通常拿不到年份，但 Prime Video 给了类型 —— 这是 Netflix 那边
+  // 没有的信号，能让匹配器分开同名的电影和剧集。
+  const type = mediaTypeFromEntity(readFirstText(card, PRIMEVIDEO_SELECTORS.cardType));
   return {
     title: cleaned.title,
-    type: 'unknown',
+    type,
     ...(cleaned.year !== undefined ? { year: cleaned.year } : {}),
     ...(season !== undefined ? { season } : {}),
   };

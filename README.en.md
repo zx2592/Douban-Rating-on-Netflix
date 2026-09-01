@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/version-0.4.0-2e963d" alt="version 0.4.0">
   <img src="https://img.shields.io/badge/Manifest-V3-4285F4" alt="Manifest V3">
   <img src="https://img.shields.io/badge/Chrome-110%2B-4285F4" alt="Chrome 110+">
-  <img src="https://img.shields.io/badge/tests-402%20passing-2e963d" alt="402 tests passing">
+  <img src="https://img.shields.io/badge/tests-410%20passing-2e963d" alt="410 tests passing">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6" alt="TypeScript strict">
 </p>
 
@@ -363,7 +363,7 @@ src/
 | --- | --- |
 | `npm run build` | Bundle into `dist/` and print the build stamp |
 | `npm run watch` | Rebuild on source changes |
-| `npm test` | Unit tests (402 cases) |
+| `npm test` | Unit tests (410 cases) |
 | `npm run typecheck` | TypeScript check |
 | `npm run check` | Typecheck + tests + build. Run this before committing |
 | `npm run icons` | Regenerate the PNGs under `icons/` |

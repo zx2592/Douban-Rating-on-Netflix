@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
 import { queryFirst, readFirstText } from '../src/content/dom';
-import { extractFromCard, extractFromDetail, isDetailPage } from '../src/content/primevideo/extract';
+import { extractFromCard, extractFromDetail, isDetailPage, mediaTypeFromEntity } from '../src/content/primevideo/extract';
 import { PRIMEVIDEO_SELECTORS } from '../src/content/primevideo/selectors';
 
 /**
@@ -204,8 +204,10 @@ describe('线上真实结构：影片卡片', () => {
     expect(queryFirst(el, PRIMEVIDEO_SELECTORS.cardAnchor)).not.toBeNull();
   });
 
-  it('选择器清单把 poster-link 排在最前', () => {
-    expect(PRIMEVIDEO_SELECTORS.card[0]).toBe('a[data-testid="poster-link"]');
+  it('poster-link 仍在清单里 —— 有些行用的是这种卡片', () => {
+    // 容器（data-card-title）信息更全所以排第一，但轮播行里的
+    // poster-link 卡片没有容器，这一条不能丢。
+    expect(PRIMEVIDEO_SELECTORS.card.some((s) => s.includes('poster-link'))).toBe(true);
   });
 });
 
@@ -266,5 +268,75 @@ describe('线上真实结构：data-card-title', () => {
     const el = document.querySelector<HTMLElement>('[data-card-title]')!;
     // 后代链接不是详情页地址 → 不是影片卡片。
     expect(extractFromCard(el)).toBeNull();
+  });
+});
+
+describe('线上真实结构：卡片容器', () => {
+  /**
+   * 实测抓回来的完整卡片：容器带片名和类型，链接在里面两层。
+   * class 名、data-* 属性、嵌套层级全部照抄报告。
+   */
+  const REAL_CARD = `
+    <article class="ulDoOY I3vXhO ae7h_p" data-card-title="Bring It On"
+             data-card-entity-type="Movie" data-card-entitlement="Entitled"
+             data-card-position="2" data-card-can-hover="true" data-testid="card"
+             data-card-playback-behaviour="EXPANDED">
+      <section class="qFCD8F Hbj8Gx" data-testid="card-section">
+        <div class="BVySw9 jaSqrZ" data-testid="packshot">
+          <a class="zyfcZQ" href="/detail/0QX0P4OK8HRX488C6WE3IXVRCO?jic=64"></a>
+        </div>
+      </section>
+    </article>`;
+
+  it('从容器上读出片名', () => {
+    document.body.innerHTML = REAL_CARD;
+    const el = document.querySelector<HTMLElement>('[data-card-title]')!;
+    expect(extractFromCard(el)?.title).toBe('Bring It On');
+  });
+
+  it('从容器上读出类型 —— Netflix 那边没有的信号', () => {
+    // 在此之前列表卡片一律只能发 type: 'unknown'，匹配器拿不到消歧信号。
+    document.body.innerHTML = REAL_CARD;
+    const el = document.querySelector<HTMLElement>('[data-card-title]')!;
+    expect(extractFromCard(el)?.type).toBe('movie');
+  });
+
+  it('角标落点是 packshot，不再退回整张卡片', () => {
+    document.body.innerHTML = REAL_CARD;
+    const el = document.querySelector<HTMLElement>('[data-card-title]')!;
+    expect(queryFirst(el, PRIMEVIDEO_SELECTORS.cardAnchor)?.getAttribute('data-testid')).toBe('packshot');
+  });
+
+  it('同一部片只算一张卡片，容器和内部链接不重复命中', () => {
+    // 实测：170 张卡片留下了 327 个身份标记 —— 容器和内部的 <a> 都被
+    // 当成卡片各处理了一遍。同一部片查两次、可能挂两个角标。
+    document.body.innerHTML = REAL_CARD;
+    const matched = document.querySelectorAll(PRIMEVIDEO_SELECTORS.card.join(', '));
+    expect(matched).toHaveLength(1);
+    expect(matched[0]!.getAttribute('data-card-title')).toBe('Bring It On');
+  });
+
+  it('容器排在选择器清单最前 —— 它的信息最全', () => {
+    expect(PRIMEVIDEO_SELECTORS.card[0]).toBe('[data-card-title]');
+  });
+});
+
+describe('mediaTypeFromEntity', () => {
+  it('实测值 Movie 归为电影', () => {
+    expect(mediaTypeFromEntity('Movie')).toBe('movie');
+  });
+
+  it('剧集侧的几种可能写法都归为剧集', () => {
+    // 剧集的确切取值还没在实测里见到，所以用「包含」而不是等值判断：
+    // 猜错一个字面量会让所有剧集掉回 unknown，包含判断最差也只是回到原状。
+    for (const value of ['TV Show', 'tvSeries', 'Series', 'Season']) {
+      expect(mediaTypeFromEntity(value)).toBe('tv');
+    }
+  });
+
+  it('没见过的取值保持 unknown，不猜', () => {
+    expect(mediaTypeFromEntity('LiveEvent')).toBe('unknown');
+    expect(mediaTypeFromEntity(null)).toBe('unknown');
+    expect(mediaTypeFromEntity('')).toBe('unknown');
   });
 });
