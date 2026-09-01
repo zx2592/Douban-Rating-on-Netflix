@@ -15,6 +15,8 @@ const netflix: SiteAdapter = {
   cardAnchor: NETFLIX_SELECTORS.cardAnchor,
   modal: NETFLIX_SELECTORS.modal,
   modalAnchor: NETFLIX_SELECTORS.modalAnchor,
+  // Netflix 回收卡片时改的是这两个属性（片名从 aria-label 或封面 alt 上读）。
+  watchedAttributes: ['aria-label', 'alt'],
   extractFromCard,
   extractFromModal,
   identityOf: queryIdentity,

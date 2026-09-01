@@ -340,3 +340,48 @@ describe('mediaTypeFromEntity', () => {
     expect(mediaTypeFromEntity('')).toBe('unknown');
   });
 });
+
+describe('线上真实结构：hero 操作区', () => {
+  /**
+   * 实测抓回来的操作区。这里面全是按钮，一个影片卡片都没有，但它们的
+   * href 都指向 /detail/<ASIN>，光看路由和真卡片没有区别。
+   *
+   * 这个坑踩了两次：先撞见播放按钮（aria-label="Watch now"），排掉之后
+   * 又撞见 Info 按钮（aria-label="More details for Sing 2"）—— 两次都真的
+   * 拿这些文案去查了评分。所以改成按结构整片排除，不再逐个列举按钮名。
+   */
+  const ACTION_BOX = `
+    <div class="oVqY8q" data-testid="title-metadata-main">
+      <div class="imzVmU XZjb4R sQqF2N" data-testid="action-box">
+        <div class="dJNwJc">
+          <a class="_1jWggM fbl-play-btn" href="/detail/0K04DMLEJSTE354379LLPZ9ZAN?autoplay=1"
+             data-testid="play" data-automation-id="play" aria-label="Watch now">PlayWatch now</a>
+        </div>
+        <label class="jDcAoh" data-testid="details-icon" data-automation-id="details-icon">
+          <a class="_39zede fbl-icon-btn" href="/detail/B09PMKBRJ7?jic=16"
+             aria-label="More details for Sing 2">Info</a>
+        </label>
+      </div>
+    </div>`;
+
+  it('操作区里的按钮一个都不当成影片卡片', () => {
+    document.body.innerHTML = ACTION_BOX;
+    for (const el of document.querySelectorAll<HTMLElement>('a')) {
+      expect(extractFromCard(el)).toBeNull();
+    }
+  });
+
+  it('CSS 选择器层面也整片排除操作区', () => {
+    document.body.innerHTML = ACTION_BOX;
+    expect(document.querySelectorAll(PRIMEVIDEO_SELECTORS.card.join(', '))).toHaveLength(0);
+  });
+
+  it('按结构排除，而不是逐个列举按钮的 aria-label', () => {
+    // 文案随界面语言变，列举永远追不上。这条断言守的是「排的是区域，
+    // 不是文案」这个决定。
+    const joined = PRIMEVIDEO_SELECTORS.card.join(' ');
+    expect(joined).toContain('action-box');
+    expect(joined.toLowerCase()).not.toContain('watch now');
+    expect(joined.toLowerCase()).not.toContain('more details');
+  });
+});

@@ -29,6 +29,15 @@ export const DETAIL_ROUTE = /\/(?:gp\/video\/)?detail\/[A-Z0-9]+/i;
  */
 const NOT_A_CARD = [
   '[aria-hidden="true"]',
+  // hero 的操作区。里面全是按钮：播放、加入清单、「More details」。
+  //
+  // 按结构排除整个区域，而不是逐个列举按钮名 —— 后者是治标的：实测先撞见
+  // 播放按钮（aria-label="Watch now"），排掉之后又撞见 Info 按钮
+  // （aria-label="More details for Sing 2"），两次都真的拿这些文案去查了
+  // 评分。而且这些文案随界面语言变，列举永远追不上。操作区里没有任何
+  // 东西是影片卡片，整片排掉才是对的。
+  '[data-testid="action-box"] *',
+  '[data-testid="details-icon"] *',
   '[data-testid="play"]',
   '[data-automation-id="play"]',
   // hero 区域的整幅背景图链接。它和 hero 的其它链接指向同一部片，而且里面
@@ -132,6 +141,18 @@ export const PRIMEVIDEO_SELECTORS = {
     '[data-testid="title-art"]',
     'h1',
   ],
+
+  /**
+   * 卡片被复用时站点会改的属性。
+   *
+   * 榜单是横向滚动的虚拟列表，节点会回收给下一部片子用 —— 此时改的是
+   * `data-card-title`（片名）和 `data-card-entity-type`（类型），不是增删
+   * 节点。主循环靠 MutationObserver 的 attributeFilter 收这个通知；漏了它，
+   * 上一部片的评分会一直挂在新片子的封面上。
+   *
+   * aria-label / alt 也留着：卡片兜底选择器命中的是 <a>，片名从这两个属性上读。
+   */
+  watchedAttributes: ['data-card-title', 'data-card-entity-type', 'aria-label', 'alt'],
 
   /**
    * 出现分季选择器或剧集列表，说明这是剧集而不是电影。

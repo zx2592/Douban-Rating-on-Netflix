@@ -243,6 +243,81 @@ describe('诊断标记', () => {
     expect(document.querySelector('article')!.getAttribute('data-dbr-state')).toBe('missing');
   });
 
+  it('读不到片名时标成 skipped，不会停在 querying 骗人', async () => {
+    // 实测报告里出现过「26 张卡片一直在 querying」，看着像后台卡死，
+    // 其实是提前返回的路径没更新状态。诊断信号失真比没有信号更糟。
+    document.body.innerHTML = '<article data-film="有名字"></article>';
+    await startFakeSite({
+      // 扫描时能取到片名（于是被观察），处理时取不到（模拟卡片被清空）。
+      extractFromCard: (() => {
+        let calls = 0;
+        return (el: HTMLElement) => {
+          calls += 1;
+          return calls === 1 ? { title: el.getAttribute('data-film')!, type: 'unknown' as const } : null;
+        };
+      })(),
+    });
+
+    scrollIntoView();
+    await settle(800);
+
+    expect(document.querySelector('article')!.getAttribute('data-dbr-state')).toBe('skipped');
+  });
+
+  it('卡片被复用后，扫描器的新状态不会被旧结果覆盖', async () => {
+    // 复用发生后扫描器会按新片子把卡片标成 pending 并重新排队 —— 那才是
+    // 它当前的真实状态。旧请求回来时若无条件写 recycled，就把一个更新的、
+    // 正确的状态改回了过期描述。两者存在竞争，必须显式判断。
+    (globalThis as unknown as { chrome: { runtime: { sendMessage: unknown } } }).chrome.runtime.sendMessage =
+      vi.fn(async (request: ExtensionRequest): Promise<ExtensionResponse> => {
+        if (request.kind !== 'lookup') return { kind: 'interest', recorded: true };
+        lookups.push({ query: request.query, site: request.site });
+        // 慢响应，制造出「请求在途」的窗口
+        await new Promise((r) => setTimeout(r, 500));
+        return { kind: 'lookup', outcome: { douban: { status: 'ok', rating: RATING }, imdb: { status: 'disabled' } } };
+      });
+
+    document.body.innerHTML = CARD;
+    await startFakeSite({
+      // 这个虚构站点的片名在 data-film 上，复用时改的就是它 —— 必须声明，
+      // 否则 MutationObserver 收不到通知（见下一条用例）。
+      watchedAttributes: ['data-film'],
+      extractFromCard: (el: HTMLElement) => {
+        const title = el.getAttribute('data-film');
+        return title ? { title, type: 'unknown' as const } : null;
+      },
+    });
+
+    scrollIntoView();
+    await settle(700);
+    // 此刻请求在途，把卡片换成另一部片
+    document.querySelector('article')!.setAttribute('data-film', '换成了别的片');
+    await settle(900);
+
+    const card = document.querySelector('article')!;
+    // 关键：不能是 recycled —— 扫描器已经按新片子重新排队了。
+    expect(card.getAttribute('data-dbr-state')).not.toBe('recycled');
+    expect(card.getAttribute('data-dbr-identity')).toContain('换成了别的片');
+    // 而且旧结果绝不能挂到新片子的封面上。
+    expect(document.querySelectorAll('.dbr-badge')).toHaveLength(0);
+  }, 10000);
+
+  it('监听的属性由适配器决定，不是写死的 aria-label / alt', async () => {
+    // 这条是真 bug 抓出来的：attributeFilter 原先硬编码 ['aria-label', 'alt']，
+    // 那是照 Netflix 定的。Prime Video 的片名在 data-card-title 上，卡片被
+    // 复用时改的是这个属性 —— 我们根本收不到通知，上一部片的评分会一直挂在
+    // 新片子的封面上。分数配错封面比不显示分数糟糕得多。
+    document.body.innerHTML = CARD;
+    await startFakeSite({ watchedAttributes: ['data-film'] });
+    expect(observed).toHaveLength(1);
+
+    // 只改属性、不动节点结构。默认的 filter 下这一步不会触发任何回调。
+    document.querySelector('article')!.setAttribute('data-film', '另一部片');
+    await settle(400);
+
+    expect(document.querySelector('article')!.getAttribute('data-dbr-identity')).toContain('另一部片');
+  });
+
   it('暂时性失败标成 error', async () => {
     (globalThis as unknown as { chrome: { runtime: { sendMessage: unknown } } }).chrome.runtime.sendMessage =
       vi.fn(async (request: ExtensionRequest): Promise<ExtensionResponse> => {

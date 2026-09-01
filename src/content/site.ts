@@ -36,6 +36,14 @@ export interface SiteAdapter {
   readonly modal: readonly string[];
   /** 详情层里角标的落点。 */
   readonly modalAnchor: readonly string[];
+  /**
+   * 卡片被复用时站点会改的属性名。留空则用默认的 aria-label / alt。
+   *
+   * 必须由站点提供：默认那两个是照 Netflix 定的，Prime Video 的片名挂在
+   * `data-card-title` 上，复用时改的是它。用默认值的话我们收不到通知，
+   * 上一部片的评分会一直挂在新片子的封面上 —— 分数配错封面比不显示糟得多。
+   */
+  readonly watchedAttributes?: readonly string[];
   extractFromCard(card: HTMLElement): MediaQuery | null;
   extractFromModal(modal: HTMLElement): MediaQuery | null;
   /** 用于判断卡片被复用后标题是否变了。 */
@@ -52,7 +60,18 @@ const IDENTITY_ATTR = 'data-dbr-identity';
  * 「多少张在等视口 / 多少张查到了 / 多少张未收录」。
  */
 const STATE_ATTR = 'data-dbr-state';
-type CardState = 'pending' | 'querying' | 'ok' | 'missing' | 'error';
+type CardState =
+  /** 已发现，在等进入视口。 */
+  | 'pending'
+  /** 请求已发出，在等结果。 */
+  | 'querying'
+  | 'ok'
+  | 'missing'
+  | 'error'
+  /** 读不到片名，这张压根不该查。 */
+  | 'skipped'
+  /** 请求回来时这个 DOM 节点已被站点复用给别的片子，结果作废。 */
+  | 'recycled';
 
 function setState(card: HTMLElement, state: CardState): void {
   card.setAttribute(STATE_ATTR, state);
@@ -224,7 +243,14 @@ async function processCard(card: HTMLElement): Promise<void> {
   if (stopped || !card.isConnected || !settings.enabled || !settings.showOnCards) return;
 
   const query = adapter.extractFromCard(card);
-  if (!query) return;
+  if (!query) {
+    // 状态必须跟着走完每一条分支，否则它会停在 querying 上骗人 ——
+    // 实测报告里就出现过「26 张卡片一直在 querying」，看着像后台卡死，
+    // 其实是这些提前返回的路径没更新状态。诊断信号本身失真，
+    // 比没有信号更糟。
+    setState(card, 'skipped');
+    return;
+  }
 
   const anchor = queryFirst(card, adapter.cardAnchor) ?? card;
   const identity = adapter.identityOf(query);
@@ -244,6 +270,12 @@ async function processCard(card: HTMLElement): Promise<void> {
   const current = adapter.extractFromCard(card);
   if (!current || adapter.identityOf(current) !== identity) {
     debug('卡片已被复用，丢弃结果', identity);
+    // 只在扫描器还没重新标记过这张卡片时才写 recycled。
+    //
+    // 复用发生后扫描器会按新片子把它标成 pending 并重新排队 —— 那才是这张
+    // 卡片当前的真实状态。这里若无条件覆盖，就把一个更新的、正确的状态
+    // 改回了一个过期的描述。两者存在竞争，谁后写谁赢，所以必须显式判断。
+    if (card.getAttribute(IDENTITY_ATTR) === identity) setState(card, 'recycled');
     return;
   }
 
@@ -464,13 +496,18 @@ export async function startSite(next: SiteAdapter): Promise<void> {
   mutationObserver.observe(document.body, {
     childList: true,
     subtree: true,
-    // Netflix 的横向列表会回收 DOM 节点给下一部片子用，此时它改的是
-    // aria-label / alt 属性而不是增删节点。不监听属性的话，被复用的卡片会
-    // 一直挂着上一部片的评分 —— 分数配错封面比不显示分数糟糕得多。
-    // 用 attributeFilter 限定范围：Netflix 在动画期间会疯狂改 style 和 class，
+    // 两个站点的横向列表都会回收 DOM 节点给下一部片子用，此时它改的是属性
+    // 而不是增删节点。不监听属性的话，被复用的卡片会一直挂着上一部片的
+    // 评分 —— 分数配错封面比不显示分数糟糕得多。
+    //
+    // 要监听哪些属性由适配器给：Netflix 改的是 aria-label / alt，
+    // Prime Video 改的是 data-card-title。这里原先硬编码前者，Prime Video
+    // 于是完全收不到复用通知 —— 用例「监听的属性由适配器决定」守着这一条。
+    //
+    // 必须用 attributeFilter 限定范围：站点在动画期间会疯狂改 style 和 class，
     // 不过滤的话回调会被淹没。
     attributes: true,
-    attributeFilter: ['aria-label', 'alt'],
+    attributeFilter: [...(adapter.watchedAttributes ?? ['aria-label', 'alt'])],
   });
   scan();
 

@@ -19,6 +19,7 @@ const primevideo: SiteAdapter = {
   name: 'Prime Video',
   card: PRIMEVIDEO_SELECTORS.card,
   cardAnchor: PRIMEVIDEO_SELECTORS.cardAnchor,
+  watchedAttributes: PRIMEVIDEO_SELECTORS.watchedAttributes,
   // 详情页没有独立容器，整个 <main>（退到 body）就是它。
   modal: ['main', 'body'],
   modalAnchor: PRIMEVIDEO_SELECTORS.detailAnchor,

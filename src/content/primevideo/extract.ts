@@ -55,6 +55,10 @@ export function extractFromCard(card: HTMLElement): MediaQuery | null {
   // /detail/ 地址，光看 href 和真卡片没有区别，但 aria-label 是「Watch now」
   // 这类动作文案 —— 扩展真的拿它去查过评分。
   if (card.closest('[aria-hidden="true"]')) return null;
+  // 操作区里的东西一概不是影片卡片：播放、加入清单、More details。
+  // 实测这两类按钮的 aria-label 分别是「Watch now」和「More details for
+  // Sing 2」—— 都真的被当成片名查过。
+  if (card.closest('[data-testid="action-box"], [data-testid="details-icon"]')) return null;
   if (card.matches('[data-testid="play"], [data-automation-id="play"]')) return null;
 
   const raw = readFirstText(card, PRIMEVIDEO_SELECTORS.cardTitle);
