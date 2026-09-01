@@ -1,14 +1,14 @@
-<h1 align="center">豆瓣 &amp; IMDb 评分 for Netflix</h1>
+<h1 align="center">豆瓣 &amp; IMDb 评分</h1>
 
 <p align="center">
-  一个 Chrome 扩展：在 Netflix 的影片封面上就地显示<b>豆瓣和 IMDb 两个评分</b>，点击各自跳转对应条目。
+  一个 Chrome 扩展：在 <b>Netflix</b> 和 <b>Prime Video</b> 的影片封面上就地显示<b>豆瓣和 IMDb 两个评分</b>，点击各自跳转对应条目。
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.3.0-2e963d" alt="version 0.3.0">
+  <img src="https://img.shields.io/badge/version-0.4.0-2e963d" alt="version 0.4.0">
   <img src="https://img.shields.io/badge/Manifest-V3-4285F4" alt="Manifest V3">
   <img src="https://img.shields.io/badge/Chrome-110%2B-4285F4" alt="Chrome 110+">
-  <img src="https://img.shields.io/badge/tests-333%20passing-2e963d" alt="333 tests passing">
+  <img src="https://img.shields.io/badge/tests-425%20passing-2e963d" alt="425 tests passing">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6" alt="TypeScript strict">
 </p>
 
@@ -24,6 +24,7 @@
 
 |  | |
 | --- | --- |
+| **两个站点** | Netflix 与 Prime Video，共用同一套主循环和评分来源 |
 | **两个评分并排** | 豆瓣在前（绿），IMDb 在后（IMDb 自己的金黄色），一眼分得清哪个是哪家 |
 | **两边各自独立** | 豆瓣被限流时 IMDb 照常出分，反之亦然；任一来源都能单独关掉 |
 | **点哪段跳哪家** | 点绿色去豆瓣条目，点黄色去 IMDb 条目，都不会误触发 Netflix 的播放 |
@@ -51,6 +52,8 @@ npm run build
 | 设置 | 说明 |
 | --- | --- |
 | 启用扩展 | 总开关。关掉后立即清除页面上所有角标 |
+| 在 Netflix 上启用 | 关掉即不在 Netflix 上注入任何东西 |
+| 在 Prime Video 上启用 | 同上 |
 | 显示豆瓣评分 | 关掉即不再向豆瓣发任何请求 |
 | 显示 IMDb 评分 | 关掉即不再向 IMDb 发任何请求 |
 | 在列表封面上显示 | 关掉则只在详情弹层里显示 |
@@ -75,11 +78,17 @@ npm run build
 
 | 现象 | 怎么办 |
 | --- | --- |
-| 完全没有角标 | 先确认跑的是哪一版（见下）；再看 Console 有没有「没有找到任何影片卡片」的警告——那说明 Netflix 改版了 |
+| 完全没有角标 | **先分清是哪一种**：Console 里执行 `document.documentElement.dataset.dbrLoaded`。有值 = 脚本注入了，去看有没有「没有找到任何影片卡片」的警告（那是选择器失效）；**是 `undefined` = 脚本根本没注入**，见下方「脚本没注入」 |
 | 只有少数片有评分 | 正常，见上方「四个预期」。等缓存积累 |
 | 角标里出现奇怪的文字 | 多半是别的扩展（如翻译类）在改 DOM，见「和其它扩展共存」 |
 | 评分明显配错了片 | 这是真 bug。点扩展图标 →「检索接口诊断」→ 用「单片排查」输入片名，把输出发给开发者 |
 | 弹窗显示橙色限流提示 | 等提示里给出的时间，期间扩展会自动停止请求 |
+
+**脚本没注入（`dbrLoaded` 是 `undefined`）。** 这和「选择器失效」是两回事，页面上没有任何线索能区分——脚本没跑起来的话，连那条 Console 警告都不会有。按这个顺序查：
+
+1. **换个站点试。** 在 Netflix 上也执行一次 `document.documentElement.dataset.dbrLoaded`。Netflix 有值而这个站点没有 → 是 manifest 的匹配规则没覆盖当前域名；两个都没有 → 扩展本身没加载或没重新构建。
+2. **看当前 URL。** Prime Video 的投放形态有两类：独立站点 `primevideo.com`，以及各区域 amazon 站点下的 `/gp/video/` 路径。manifest 里两类都写了，但 amazon 的域名是逐个列举的（`.com` / `.co.jp` / `.de` …），你所在的区域站可能不在名单里。把 URL 发回来，或者直接往 `manifest.json` 的 `content_scripts` 里加一行。
+3. **注意裸域名。** `https://www.primevideo.com/*` 这样的写法**匹配不到**不带 `www` 的 `primevideo.com`——必须写成 `https://*.primevideo.com/*`。这个坑已经踩过一次，现在有 `tests/manifest.test.ts` 守着。
 
 **先确认跑的是哪一版。** `npm run build` 会打印一个版本戳，内容脚本把同一个戳写在 `<html data-dbr-loaded>` 上。在 Netflix 页面的 Console 里执行 `document.documentElement.dataset.dbrLoaded`，两者一致才说明新代码真的生效了。
 
@@ -103,7 +112,8 @@ npm run build
 - 冷门片、Netflix 独占的小语种内容可能两边都查不到，此时列表页留空、详情页显示「未收录」。
 - 繁简转换用的是一份覆盖影视标题高频字的精简表（见 `src/shared/text.ts`），不是完整的 OpenCC。缺字只会导致匹配不上，不会匹配错。
 - 剧集按季匹配：查询没有指明季数时默认取第一季。IMDb 一部剧只有一个条目，不按季拆。
-- 尚未支持 Prime Video。
+- Prime Video 的选择器已按实测结构收敛，但只在一个区域站、一种页面布局上验证过。换区域或改版后若失效，跑 `scripts/dom-probe.js` 把报告贴回来即可重新收敛。
+- Prime Video 目前只接了 `primevideo.com`，amazon 各区域站下的 `/gp/video/` 路径还没接（往 manifest 的 `content_scripts` 里加一行即可）。
 
 ---
 
@@ -268,6 +278,29 @@ node scripts/imdb-probe.mjs --curl       # 不发请求，只打印等价的 cur
 </details>
 
 <details>
+<summary><b>接 Prime Video：为什么选择器认的是路由而不是 class</b></summary>
+
+Netflix 和 Prime Video 只有 DOM 知识不同 —— 观察器、驻留判定、角标渲染、点击记兴趣、卡片复用检测这一整套完全一样，而且是这个项目里踩坑最多的部分（分数挂错封面、角标跨挂载点重复、点角标被误记成兴趣，每一条都真实发生过）。所以这些抽进了 `src/content/site.ts`，站点只提供一个 `SiteAdapter`：一组选择器 + 怎么从 DOM 里读出片名。Netflix 的入口文件因此从 362 行缩到 26 行，行为一字未改（原有 333 个用例全绿）。
+
+**选择器已按线上实测结构收敛。** 第一版是照推测写的，实测暴露出它把 181 个链接都当成了影片卡片 —— 其中包含播放按钮（扩展真的拿「Watch now」去查了评分）和 aria-hidden 的重复链接。现在改成三层：站点自己的卡片标记（`data-testid="poster-link"`、`data-card-title`）优先，路由契约兜底并排除掉那些「长得像卡片的东西」。 开发环境访问不了 primevideo.com（网络策略拒绝），而且列表页要登录、按区域渲染，抓不到真实 DOM。这个项目为「凭记忆写选择器」付过一次代价：v0.1 的 Netflix 选择器单测全绿、线上零命中。所以这一份换了条路：
+
+**优先挂在路由契约上，而不是样式上。** 影片卡片一律通过 `href` 里的 `/detail/<ASIN>` 来认。理由是稳定性有量级差别：
+
+| 依据 | 稳定性 |
+| --- | --- |
+| CSS-in-JS 的哈希 class（`_1x_1`） | 每次构建都变，依赖它等于埋雷 |
+| `data-testid` / `data-automation-id` | 比 class 稳，但仍是内部约定，会重命名 |
+| **`/detail/<ASIN>` 路由** | 产品对用户的契约，变了等于站点大改版 |
+
+同一条判断也用在了「哪些 `<a>` 不是影片」上：页面上大量链接是分类、账号、帮助，路由过滤把它们挡在外面 —— 在豆瓣那种紧配额下，这比什么都重要。
+
+详情页那边多一道门禁：Prime Video 的详情是**整页跳转**而不是弹层，所以 `extractFromDetail` 先用 URL 判断当前是不是 `/detail/` 页，不是就返回 null。少了这道门禁，每次打开首页都会拿那个 `h1`（多半是「Prime Video」或某个分类名）去查一次评分。
+
+**怎么收敛这份选择器**：在 Prime Video 的列表页打开 Console，把 `scripts/dom-probe.js` 整个粘进去回车。它不是「检查我猜的选择器对不对」，而是**从零发现结构** —— 先按链接地址找出影片卡片，再把卡片自身、上溯四层祖先、封面图、以及所有 `data-*` 钩子摊开。把报告贴回来即可据实改写选择器。
+
+</details>
+
+<details>
 <summary><b>Netflix 改版了怎么办</b></summary>
 
 Netflix 是没有公开契约的商业站点。所有 DOM 知识都集中在 `src/content/netflix/selectors.ts`，每个位置都给了一组候选选择器并按顺序尝试，改版时只需要动这一个文件。
@@ -312,10 +345,13 @@ src/
 │   └── lookup.ts    缓存 / 去重 / 优先级的编排，对数据来源无知
 ├── content/
 │   ├── badge.ts     角标的注入与更新（一个角标里可并排多个来源）
-│   └── netflix/     Netflix 适配器
-│       ├── selectors.ts   所有 Netflix DOM 知识都在这个文件里
-│       ├── extract.ts     卡片 / 弹层 → 查询条件
-│       └── index.ts       观察器主循环
+│   ├── dom.ts       两个站点共用的 DOM 助手（按候选选择器逐个尝试）
+│   ├── site.ts      站点无关的主循环：观察器 / 驻留判定 / 角标 / 点击记兴趣
+│   ├── netflix/     Netflix 适配器
+│   │   ├── selectors.ts   所有 Netflix DOM 知识都在这个文件里
+│   │   ├── extract.ts     卡片 / 弹层 → 查询条件
+│   │   └── index.ts       只声明适配器，主循环在 site.ts
+│   └── primevideo/  Prime Video 适配器（结构同上）
 └── popup/           设置页
 ```
 
@@ -323,7 +359,7 @@ src/
 | --- | --- |
 | `npm run build` | 打包到 `dist/`，并打印版本戳 |
 | `npm run watch` | 监听源码变化持续重建 |
-| `npm test` | 跑单测（333 个用例） |
+| `npm test` | 跑单测（425 个用例） |
 | `npm run typecheck` | TypeScript 类型检查 |
 | `npm run check` | 类型检查 + 测试 + 构建，提交前跑这个 |
 | `npm run icons` | 重新生成 `icons/` 下的 PNG 图标 |

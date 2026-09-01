@@ -1,3 +1,5 @@
+import type { TextSource } from '../dom';
+
 /**
  * Netflix 的 DOM 知识全部集中在这个文件里。
  *
@@ -5,21 +7,6 @@
  * A/B 实验分组看到的 DOM 也不完全一样。所以每个位置都给一组候选选择器，
  * 从最精确的往下逐个试；改版时只需要在这里加一行，不用碰任何逻辑代码。
  */
-
-/**
- * 从元素上取文本：attr 为 null 表示读 textContent，否则读该属性。
- *
- * selector 支持三种写法：
- * - `':self'`          —— 取根元素自身。新版 Netflix 把 aria-label 直接放在
- *                         卡片元素上，而 querySelector 只找后代，取不到自己。
- * - `':closest(SEL)'`  —— 沿祖先链往上找。用于 data-uia 挂在封面图而标题在
- *                         外层 <a> 上的情况。
- * - 其它               —— 普通的后代选择器。
- */
-export interface TextSource {
-  selector: string;
-  attr: string | null;
-}
 
 export const NETFLIX_SELECTORS = {
   /**
@@ -129,38 +116,3 @@ export const NETFLIX_SELECTORS = {
     '.previewModal--episodeSelector',
   ],
 } as const;
-
-/** 依次尝试一组选择器，返回第一个命中的元素。 */
-export function queryFirst(root: ParentNode, selectors: readonly string[]): HTMLElement | null {
-  for (const selector of selectors) {
-    const found = root.querySelector<HTMLElement>(selector);
-    if (found) return found;
-  }
-  return null;
-}
-
-function resolveSource(root: ParentNode, selector: string): HTMLElement | null {
-  if (selector === ':self') return root instanceof HTMLElement ? root : null;
-  const closest = /^:closest\((.+)\)$/.exec(selector);
-  if (closest) {
-    return root instanceof Element ? root.closest<HTMLElement>(closest[1]!) : null;
-  }
-  return root.querySelector<HTMLElement>(selector);
-}
-
-/** 依次尝试一组文本来源，返回第一个非空的文本。 */
-export function readFirstText(root: ParentNode, sources: readonly TextSource[]): string | null {
-  for (const source of sources) {
-    const element = resolveSource(root, source.selector);
-    if (!element) continue;
-    const raw = source.attr === null ? element.textContent : element.getAttribute(source.attr);
-    const text = raw?.trim();
-    if (text) return text;
-  }
-  return null;
-}
-
-/** 把一组选择器拼成一条，用于一次性扫描整页。 */
-export function joinSelectors(selectors: readonly string[]): string {
-  return selectors.join(', ');
-}

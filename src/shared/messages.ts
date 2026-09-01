@@ -1,9 +1,17 @@
-import type { MediaQuery, RatingsOutcome } from './types';
+import type { MediaQuery, RatingsOutcome, SiteId } from './types';
 
 /** 内容脚本 → background：查一部片子在各来源上的评分。 */
 export interface LookupRequest {
   kind: 'lookup';
   query: MediaQuery;
+  /**
+   * 请求来自哪个站点。
+   *
+   * background 靠它决定这次要不要放行 —— 分站点开关关掉之后，那个站点
+   * 不该再产生任何请求。不用 sender.tab.url 反推：那个值在 SPA 里会滞后，
+   * 而且把「我是谁」这种事交给发起方声明更直白。
+   */
+  site: SiteId;
 }
 
 /** popup → background：清空评分缓存。 */

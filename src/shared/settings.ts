@@ -4,7 +4,7 @@ export interface Settings {
   /** 总开关。关掉后内容脚本不注入任何东西。 */
   enabled: boolean;
   /** 分站点开关。第一版只有 netflix，加站点时在这里扩展。 */
-  sites: { netflix: boolean };
+  sites: { netflix: boolean; primevideo: boolean };
   /**
    * 分来源开关。关掉的来源不会产生任何网络请求 —— 这不只是隐藏显示，
    * 也是省配额的手段。
@@ -21,7 +21,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   enabled: true,
-  sites: { netflix: true },
+  sites: { netflix: true, primevideo: true },
   sources: { douban: true, imdb: true },
   badgePosition: 'top-left',
   showOnCards: true,

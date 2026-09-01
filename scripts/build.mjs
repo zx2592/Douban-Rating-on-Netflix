@@ -41,6 +41,11 @@ const bundles = [
     format: 'iife',
   },
   {
+    entryPoints: [resolve(root, 'src/content/primevideo/index.ts')],
+    outfile: resolve(outDir, 'content-primevideo.js'),
+    format: 'iife',
+  },
+  {
     entryPoints: [resolve(root, 'src/popup/popup.ts')],
     outfile: resolve(outDir, 'popup.js'),
     format: 'iife',

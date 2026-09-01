@@ -1,14 +1,14 @@
-<h1 align="center">Douban &amp; IMDb Ratings for Netflix</h1>
+<h1 align="center">Douban &amp; IMDb Ratings</h1>
 
 <p align="center">
-  A Chrome extension that shows <b>both Douban and IMDb ratings</b> right on Netflix artwork, each linking to its own entry.
+  A Chrome extension that shows <b>both Douban and IMDb ratings</b> right on <b>Netflix</b> and <b>Prime Video</b> artwork, each linking to its own entry.
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.3.0-2e963d" alt="version 0.3.0">
+  <img src="https://img.shields.io/badge/version-0.4.0-2e963d" alt="version 0.4.0">
   <img src="https://img.shields.io/badge/Manifest-V3-4285F4" alt="Manifest V3">
   <img src="https://img.shields.io/badge/Chrome-110%2B-4285F4" alt="Chrome 110+">
-  <img src="https://img.shields.io/badge/tests-333%20passing-2e963d" alt="333 tests passing">
+  <img src="https://img.shields.io/badge/tests-425%20passing-2e963d" alt="425 tests passing">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6" alt="TypeScript strict">
 </p>
 
@@ -27,6 +27,7 @@
 
 |  | |
 | --- | --- |
+| **Two sites** | Netflix and Prime Video, sharing one main loop and both rating sources |
 | **Two ratings, side by side** | Douban first (green), IMDb second (IMDb's own amber) — you can tell at a glance which is which |
 | **The two sources are independent** | If Douban is rate-limited, IMDb still shows; and vice versa. Either can be switched off on its own |
 | **Each segment links to its own site** | Click green for the Douban entry, amber for the IMDb entry. Neither triggers Netflix playback |
@@ -54,6 +55,8 @@ Click the extension icon in the toolbar:
 | Setting | What it does |
 | --- | --- |
 | Enable extension | Master switch. Turning it off clears every badge on the page immediately |
+| Enable on Netflix | Off injects nothing on Netflix |
+| Enable on Prime Video | Same, for Prime Video |
 | Show Douban rating | Off means no requests are sent to Douban at all |
 | Show IMDb rating | Off means no requests are sent to IMDb at all |
 | Show on list artwork | Off restricts badges to the detail modal |
@@ -78,11 +81,17 @@ The popup footer shows cached entry counts per source and how many titles are on
 
 | Symptom | What to do |
 | --- | --- |
-| No badges at all | First check which build is running (below); then look for the "no title cards found" warning in the console — that means Netflix changed its DOM |
+| No badges at all | **First tell the two cases apart**: run `document.documentElement.dataset.dbrLoaded` in the console. A value means the script was injected — look for the "no title cards found" warning next (that's a selector failure). **`undefined` means the script never ran at all** — see "The script wasn't injected" below |
 | Only a few titles have ratings | Normal — see "What to expect". Let the cache build up |
 | Odd text inside the badge | Usually another extension (a translator) mutating the DOM. See "Coexisting with other extensions" |
 | A rating is clearly on the wrong title | That's a real bug. Extension icon → "Search endpoint diagnostics" → use "Single title trace", and send the output |
 | Amber rate-limit notice in the popup | Wait for the time it shows; the extension stops issuing requests until then |
+
+**The script wasn't injected (`dbrLoaded` is `undefined`).** This is a different failure from "the selectors stopped matching", and the page gives you nothing to tell them apart — if the script never ran, not even the console warning appears. Check in this order:
+
+1. **Try the other site.** Run the same expression on Netflix. A value there but not here means the manifest's match patterns don't cover the current domain; nothing on either means the extension isn't loaded or wasn't rebuilt.
+2. **Look at the URL.** Prime Video ships in two shapes: the standalone `primevideo.com`, and `/gp/video/` paths on regional amazon domains. Both are in the manifest, but the amazon domains are enumerated one by one (`.com` / `.co.jp` / `.de` …) and your region may not be on the list. Send the URL, or just add a line to `content_scripts` in `manifest.json`.
+3. **Mind the bare domain.** A pattern like `https://www.primevideo.com/*` does **not** match `primevideo.com` without the `www` — it has to be `https://*.primevideo.com/*`. That trap has been hit once already; `tests/manifest.test.ts` now guards it.
 
 **Check which build is actually running.** `npm run build` prints a build stamp, and the content script writes the same stamp onto `<html data-dbr-loaded>`. Run `document.documentElement.dataset.dbrLoaded` in the console on a Netflix page — only if they match is your new code actually live.
 
@@ -106,7 +115,8 @@ Permissions requested: `storage` (settings and cache), plus the five hosts neede
 - Obscure titles and Netflix-exclusive non-English content may be missing from both sources — list pages stay blank, the modal shows "not found".
 - Traditional→Simplified conversion uses a hand-curated table covering characters common in film titles (`src/shared/text.ts`), not full OpenCC. A missing character can only cause a miss, never a wrong match.
 - Series are matched per season; a query with no season defaults to season 1. IMDb has one entry per series and does not split by season.
-- Prime Video is not supported yet.
+- Prime Video's selectors are converged against the live DOM, but only for one region and one page layout. If a different region or a redesign breaks them, run `scripts/dom-probe.js` and send the report back.
+- Prime Video currently covers `primevideo.com` only; the `/gp/video/` paths on regional amazon domains are not wired up yet (one line in the manifest's `content_scripts`).
 
 ---
 
@@ -272,6 +282,29 @@ The current rating approach was settled exactly this way: all six Node paths fai
 </details>
 
 <details>
+<summary><b>Adding Prime Video: why the selectors key off routes, not classes</b></summary>
+
+Netflix and Prime Video differ only in DOM knowledge — the observers, dwell gating, badge rendering, click-interest and card-recycling detection are identical, and they are the most heavily trapped part of this project (scores attached to the wrong artwork, duplicate badges across mount points, clicking a badge being recorded as interest — each one actually happened). So all of it moved into `src/content/site.ts`, and a site supplies only a `SiteAdapter`: a set of selectors plus how to read a title out of the DOM. Netflix's entry file went from 362 lines to 26 with no behavioural change (all 333 existing tests stayed green).
+
+**The selectors have now been converged against the live DOM.** The first version was written from inference, and the live site showed what that costs: it treated all 181 route-matching links as title cards — including the Play button (the extension really did look up a film called "Watch now") and aria-hidden duplicate links. It now works in three layers: the site's own card markers (`data-testid="poster-link"`, `data-card-title`) first, with the route contract as a fallback that explicitly excludes the things that merely look like cards:
+
+**Key off the routing contract, not the styling.** Title cards are identified purely by `/detail/<ASIN>` in the `href`. The stability difference is an order of magnitude:
+
+| Basis | Stability |
+| --- | --- |
+| CSS-in-JS hash classes (`_1x_1`) | Change every build; depending on them is planting a landmine |
+| `data-testid` / `data-automation-id` | More stable than classes, but still internal conventions that get renamed |
+| **The `/detail/<ASIN>` route** | A product contract with users; changing it means a site-wide redesign |
+
+The same test also decides which `<a>` elements are *not* films: the page is full of category, account and help links, and route filtering keeps them out — which matters more than anything else under Douban's tight quota.
+
+The detail page gets one extra gate: Prime Video's detail is a **full page navigation**, not a modal, so `extractFromDetail` first checks whether the URL is a `/detail/` page and returns null otherwise. Without that gate, every visit to the home page would look up whatever the `h1` says — usually "Prime Video" or a category name.
+
+**How to converge the selectors**: open the console on a Prime Video browse page and paste in the whole of `scripts/dom-probe.js`. It doesn't check whether my guesses were right — it **discovers the structure from scratch**: finds title cards by link URL, then lays out the card itself, four levels of ancestors, the artwork image and every `data-*` hook. Send the report back and the selectors can be rewritten from evidence.
+
+</details>
+
+<details>
 <summary><b>When Netflix changes its DOM</b></summary>
 
 Netflix is a commercial site with no public contract. All DOM knowledge lives in `src/content/netflix/selectors.ts`, where every position has an ordered list of candidate selectors — a redesign only requires touching that one file.
@@ -316,10 +349,13 @@ src/
 │   └── lookup.ts    cache / dedupe / priority orchestration, agnostic about the source
 ├── content/
 │   ├── badge.ts     badge injection and updates (several sources in one badge)
-│   └── netflix/     Netflix adapter
-│       ├── selectors.ts   every piece of Netflix DOM knowledge lives here
-│       ├── extract.ts     card / modal → query
-│       └── index.ts       observer main loop
+│   ├── dom.ts       DOM helpers shared by both sites (ordered candidate selectors)
+│   ├── site.ts      site-agnostic main loop: observers, dwell gating, badges, click-interest
+│   ├── netflix/     Netflix adapter
+│   │   ├── selectors.ts   every piece of Netflix DOM knowledge lives here
+│   │   ├── extract.ts     card / modal → query
+│   │   └── index.ts       declares the adapter; the loop lives in site.ts
+│   └── primevideo/  Prime Video adapter (same shape)
 └── popup/           settings page
 ```
 
@@ -327,7 +363,7 @@ src/
 | --- | --- |
 | `npm run build` | Bundle into `dist/` and print the build stamp |
 | `npm run watch` | Rebuild on source changes |
-| `npm test` | Unit tests (333 cases) |
+| `npm test` | Unit tests (425 cases) |
 | `npm run typecheck` | TypeScript check |
 | `npm run check` | Typecheck + tests + build. Run this before committing |
 | `npm run icons` | Regenerate the PNGs under `icons/` |
