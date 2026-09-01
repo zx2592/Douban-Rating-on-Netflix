@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/version-0.4.0-2e963d" alt="version 0.4.0">
   <img src="https://img.shields.io/badge/Manifest-V3-4285F4" alt="Manifest V3">
   <img src="https://img.shields.io/badge/Chrome-110%2B-4285F4" alt="Chrome 110+">
-  <img src="https://img.shields.io/badge/tests-393%20passing-2e963d" alt="393 tests passing">
+  <img src="https://img.shields.io/badge/tests-402%20passing-2e963d" alt="402 tests passing">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6" alt="TypeScript strict">
 </p>
 
@@ -112,7 +112,7 @@ npm run build
 - 冷门片、Netflix 独占的小语种内容可能两边都查不到，此时列表页留空、详情页显示「未收录」。
 - 繁简转换用的是一份覆盖影视标题高频字的精简表（见 `src/shared/text.ts`），不是完整的 OpenCC。缺字只会导致匹配不上，不会匹配错。
 - 剧集按季匹配：查询没有指明季数时默认取第一季。IMDb 一部剧只有一个条目，不按季拆。
-- **Prime Video 的选择器尚未经过线上验证。** 开发环境访问不了 primevideo.com，所以那份选择器是按「路由契约」（`/detail/<ASIN>`）而不是按 class 写的，命中率有待实测。跑一遍 `scripts/dom-probe.js` 把真实结构贴回来即可收敛，详见下方「接 Prime Video」。
+- Prime Video 的选择器已按实测结构收敛，但只在一个区域站、一种页面布局上验证过。换区域或改版后若失效，跑 `scripts/dom-probe.js` 把报告贴回来即可重新收敛。
 - Prime Video 目前只接了 `primevideo.com`，amazon 各区域站下的 `/gp/video/` 路径还没接（往 manifest 的 `content_scripts` 里加一行即可）。
 
 ---
@@ -282,7 +282,7 @@ node scripts/imdb-probe.mjs --curl       # 不发请求，只打印等价的 cur
 
 Netflix 和 Prime Video 只有 DOM 知识不同 —— 观察器、驻留判定、角标渲染、点击记兴趣、卡片复用检测这一整套完全一样，而且是这个项目里踩坑最多的部分（分数挂错封面、角标跨挂载点重复、点角标被误记成兴趣，每一条都真实发生过）。所以这些抽进了 `src/content/site.ts`，站点只提供一个 `SiteAdapter`：一组选择器 + 怎么从 DOM 里读出片名。Netflix 的入口文件因此从 362 行缩到 26 行，行为一字未改（原有 333 个用例全绿）。
 
-**⚠️ Prime Video 的选择器还没有经过线上验证。** 开发环境访问不了 primevideo.com（网络策略拒绝），而且列表页要登录、按区域渲染，抓不到真实 DOM。这个项目为「凭记忆写选择器」付过一次代价：v0.1 的 Netflix 选择器单测全绿、线上零命中。所以这一份换了条路：
+**选择器已按线上实测结构收敛。** 第一版是照推测写的，实测暴露出它把 181 个链接都当成了影片卡片 —— 其中包含播放按钮（扩展真的拿「Watch now」去查了评分）和 aria-hidden 的重复链接。现在改成三层：站点自己的卡片标记（`data-testid="poster-link"`、`data-card-title`）优先，路由契约兜底并排除掉那些「长得像卡片的东西」。 开发环境访问不了 primevideo.com（网络策略拒绝），而且列表页要登录、按区域渲染，抓不到真实 DOM。这个项目为「凭记忆写选择器」付过一次代价：v0.1 的 Netflix 选择器单测全绿、线上零命中。所以这一份换了条路：
 
 **优先挂在路由契约上，而不是样式上。** 影片卡片一律通过 `href` 里的 `/detail/<ASIN>` 来认。理由是稳定性有量级差别：
 
@@ -359,7 +359,7 @@ src/
 | --- | --- |
 | `npm run build` | 打包到 `dist/`，并打印版本戳 |
 | `npm run watch` | 监听源码变化持续重建 |
-| `npm test` | 跑单测（393 个用例） |
+| `npm test` | 跑单测（402 个用例） |
 | `npm run typecheck` | TypeScript 类型检查 |
 | `npm run check` | 类型检查 + 测试 + 构建，提交前跑这个 |
 | `npm run icons` | 重新生成 `icons/` 下的 PNG 图标 |

@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/version-0.4.0-2e963d" alt="version 0.4.0">
   <img src="https://img.shields.io/badge/Manifest-V3-4285F4" alt="Manifest V3">
   <img src="https://img.shields.io/badge/Chrome-110%2B-4285F4" alt="Chrome 110+">
-  <img src="https://img.shields.io/badge/tests-393%20passing-2e963d" alt="393 tests passing">
+  <img src="https://img.shields.io/badge/tests-402%20passing-2e963d" alt="402 tests passing">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6" alt="TypeScript strict">
 </p>
 
@@ -115,7 +115,7 @@ Permissions requested: `storage` (settings and cache), plus the five hosts neede
 - Obscure titles and Netflix-exclusive non-English content may be missing from both sources — list pages stay blank, the modal shows "not found".
 - Traditional→Simplified conversion uses a hand-curated table covering characters common in film titles (`src/shared/text.ts`), not full OpenCC. A missing character can only cause a miss, never a wrong match.
 - Series are matched per season; a query with no season defaults to season 1. IMDb has one entry per series and does not split by season.
-- **Prime Video's selectors have not been verified against the live site.** The dev environment can't reach primevideo.com, so they key off the **route contract** (`/detail/<ASIN>`) rather than classes. Run `scripts/dom-probe.js` and send the report back to converge them — see "Adding Prime Video" below.
+- Prime Video's selectors are converged against the live DOM, but only for one region and one page layout. If a different region or a redesign breaks them, run `scripts/dom-probe.js` and send the report back.
 - Prime Video currently covers `primevideo.com` only; the `/gp/video/` paths on regional amazon domains are not wired up yet (one line in the manifest's `content_scripts`).
 
 ---
@@ -286,7 +286,7 @@ The current rating approach was settled exactly this way: all six Node paths fai
 
 Netflix and Prime Video differ only in DOM knowledge — the observers, dwell gating, badge rendering, click-interest and card-recycling detection are identical, and they are the most heavily trapped part of this project (scores attached to the wrong artwork, duplicate badges across mount points, clicking a badge being recorded as interest — each one actually happened). So all of it moved into `src/content/site.ts`, and a site supplies only a `SiteAdapter`: a set of selectors plus how to read a title out of the DOM. Netflix's entry file went from 362 lines to 26 with no behavioural change (all 333 existing tests stayed green).
 
-**⚠️ Prime Video's selectors have not been verified against the live site.** The dev environment can't reach primevideo.com, and the browse pages require a login and render per region, so there's no real DOM to capture. This project already paid once for writing selectors from memory: v0.1's Netflix selectors passed every unit test and matched zero cards in production. So this adapter takes a different route:
+**The selectors have now been converged against the live DOM.** The first version was written from inference, and the live site showed what that costs: it treated all 181 route-matching links as title cards — including the Play button (the extension really did look up a film called "Watch now") and aria-hidden duplicate links. It now works in three layers: the site's own card markers (`data-testid="poster-link"`, `data-card-title`) first, with the route contract as a fallback that explicitly excludes the things that merely look like cards:
 
 **Key off the routing contract, not the styling.** Title cards are identified purely by `/detail/<ASIN>` in the `href`. The stability difference is an order of magnitude:
 
@@ -363,7 +363,7 @@ src/
 | --- | --- |
 | `npm run build` | Bundle into `dist/` and print the build stamp |
 | `npm run watch` | Rebuild on source changes |
-| `npm test` | Unit tests (393 cases) |
+| `npm test` | Unit tests (402 cases) |
 | `npm run typecheck` | TypeScript check |
 | `npm run check` | Typecheck + tests + build. Run this before committing |
 | `npm run icons` | Regenerate the PNGs under `icons/` |

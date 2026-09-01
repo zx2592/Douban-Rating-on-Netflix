@@ -26,8 +26,19 @@ export function isDetailPage(url: string = location.pathname + location.search):
 export function extractFromCard(card: HTMLElement): MediaQuery | null {
   // 先确认这真是一张影片卡片。页面上还有大量导航、分类、账号相关的链接，
   // 它们同样是 <a>，拿去查评分纯属浪费配额。
-  const href = card.getAttribute('href') ?? '';
-  if (!DETAIL_ROUTE.test(href)) return null;
+  //
+  // 卡片不一定是 <a> 本身：`[data-card-title]` 命中的是卡片容器，链接在它
+  // 里面。所以三个方向都找一遍再取 href。
+  const link = card.matches('a[href]')
+    ? card
+    : (card.querySelector<HTMLElement>('a[href]') ?? card.closest<HTMLElement>('a[href]'));
+  if (!DETAIL_ROUTE.test(link?.getAttribute('href') ?? '')) return null;
+
+  // 实测排除：aria-hidden 的重复链接、以及播放/操作按钮。它们指向同一个
+  // /detail/ 地址，光看 href 和真卡片没有区别，但 aria-label 是「Watch now」
+  // 这类动作文案 —— 扩展真的拿它去查过评分。
+  if (card.closest('[aria-hidden="true"]')) return null;
+  if (card.matches('[data-testid="play"], [data-automation-id="play"]')) return null;
 
   const raw = readFirstText(card, PRIMEVIDEO_SELECTORS.cardTitle);
   if (!raw) return null;
