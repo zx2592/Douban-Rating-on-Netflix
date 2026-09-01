@@ -385,3 +385,70 @@ describe('线上真实结构：hero 操作区', () => {
     expect(joined.toLowerCase()).not.toContain('more details');
   });
 });
+
+describe('线上真实结构：hero 首屏大图', () => {
+  /**
+   * 实测抓回来的 hero。它是页面上最显眼的一部片，之前**一张角标都不出**：
+   * 三条内部链接全被排除了（整幅背景图 data-testid="image-link"、标题
+   * 美术字里 aria-hidden 的重复链接、播放按钮），而 hero 容器本身没有
+   * data-card-title —— 于是最该出分的那部片成了唯一不出分的。
+   */
+  const HERO = `
+    <li class="acHA45" data-index="8" aria-label="Title number 9" data-scroll-index="1000">
+      <article class="SJmNHq ae7h_p NBTKAH" data-testid="top-hero-card">
+        <div class="vMn1Fp" data-animate-hero-background="true">
+          <a class="VfXkrJ" data-testid="image-link"
+             href="/detail/B09PMKBRJ7?jic=16&amp;ref_=atv_hm_hom_c" aria-label="Sing 2">Sing 2</a>
+        </div>
+        <div class="oVqY8q" data-animate-hero-metadata="true" data-testid="title-metadata-main">
+          <h2 class="jCQTBM KYgxXq" data-testid="title-art" aria-label="Sing 2">
+            <a aria-hidden="true" href="/detail/B09PMKBRJ7?jic=16">
+              <picture><img class="JoneUI" alt="Sing 2" data-testid="base-image"></picture>
+            </a>
+          </h2>
+          <div class="imzVmU" data-testid="action-box">
+            <a class="fbl-play-btn" href="/detail/0K04DMLEJSTE354379LLPZ9ZAN?autoplay=1"
+               data-testid="play" data-automation-id="play" aria-label="Watch now">PlayWatch now</a>
+          </div>
+        </div>
+      </article>
+    </li>`;
+
+  beforeEach(() => {
+    document.body.innerHTML = HERO;
+  });
+
+  it('hero 恰好命中一次，不会连内部链接一起算成好几张卡片', () => {
+    // 三条内部链接都指向同一部片。容器和链接同时命中的话，同一部片会被
+    // 当成四张卡片各查一遍 —— 这正是之前 170 张卡片留下 327 个身份标记的
+    // 那类 bug。
+    const hit = document.querySelectorAll(PRIMEVIDEO_SELECTORS.card.join(', '));
+    expect(hit).toHaveLength(1);
+    expect((hit[0] as HTMLElement).getAttribute('data-testid')).toBe('top-hero-card');
+  });
+
+  it('从 hero 上读出片名，而不是「Watch now」', () => {
+    const hero = document.querySelector<HTMLElement>('[data-testid="top-hero-card"]')!;
+    expect(extractFromCard(hero)?.title).toBe('Sing 2');
+  });
+
+  it('片名取自标题美术字的 aria-label，不依赖 img 的出现顺序', () => {
+    // hero 里除了标题美术字还有整幅背景图，谁先出现没有保证。
+    const hero = document.querySelector<HTMLElement>('[data-testid="top-hero-card"]')!;
+    hero.querySelector('img')!.setAttribute('alt', '背景图，不是片名');
+    expect(readFirstText(hero, PRIMEVIDEO_SELECTORS.cardTitle)).toBe('Sing 2');
+  });
+
+  it('角标落在标题美术字上，不是整幅背景图上', () => {
+    // 落到背景图上的话角标会甩到整块背景的左上角，而且 hero 会自动轮播，
+    // 角标跟着抖。
+    const hero = document.querySelector<HTMLElement>('[data-testid="top-hero-card"]')!;
+    const anchor = queryFirst(hero, PRIMEVIDEO_SELECTORS.cardAnchor);
+    expect(anchor?.getAttribute('data-testid')).toBe('title-art');
+  });
+
+  it('hero 里的播放按钮依然不当成卡片', () => {
+    const play = document.querySelector<HTMLElement>('[data-testid="play"]')!;
+    expect(extractFromCard(play)).toBeNull();
+  });
+});

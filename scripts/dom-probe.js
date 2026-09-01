@@ -162,7 +162,7 @@
   say(`  其中没有角标       ${withoutBadge.length}`);
   // 扩展给处理过的卡片打了身份标记；有标记却没角标，说明「查过但没结果」，
   // 和「压根没被扫到」是两回事，修法完全不同。
-  const marked = cards.filter((el) => el.hasAttribute('data-dbr-identity'));
+  const marked = cards.filter((el) => el.hasAttribute('data-dbr-identity') && !el.classList.contains('dbr-badge'));
   say(`  被扫描器处理过的   ${marked.length}（有 data-dbr-identity 标记）`);
   say(`  页面上的角标总数   ${document.querySelectorAll('.dbr-badge').length}`);
   say('');
@@ -185,8 +185,23 @@
     const n = document.querySelectorAll(`[data-dbr-state="${state}"]`).length;
     say(`    ${state.padEnd(9)} ${String(n).padStart(4)}  ${label}`);
   }
-  const noState = document.querySelectorAll('[data-dbr-identity]:not([data-dbr-state])').length;
+  // 角标元素自己也带 data-dbr-identity（用于跨挂载点判重），必须排掉，
+  // 否则每挂一个角标就多算一张「无状态的卡片」—— 实测报告里就这么冒出过
+  // 48 张幽灵卡片，数字正好等于页面上的角标数。这是这个脚本第二次把自己的
+  // 计数当成扩展的行为报出来，同一类错误。
+  const noState = document.querySelectorAll(
+    '[data-dbr-identity]:not([data-dbr-state]):not(.dbr-badge)',
+  ).length;
   if (noState > 0) say(`    (无状态)  ${String(noState).padStart(4)}  扩展版本过旧，没有写状态标记`);
+  // 顺带把 hero 单独报出来：它是轮播的，若整组都留在 DOM 里，可能一次冒出
+  // 十来个身份标记。这个数字应当接近 1。
+  const hero = document.querySelectorAll('[data-testid="top-hero-card"]');
+  const heroMarked = [...hero].filter((el) => el.hasAttribute('data-dbr-identity'));
+  if (hero.length > 0) {
+    say(`  hero 卡片 ${hero.length} 个，其中被处理 ${heroMarked.length} 个` +
+        `${heroMarked.length > 2 ? '  ⚠️ 轮播整组都被查了，要收紧' : ''}`);
+    for (const el of heroMarked) say(`     ${el.getAttribute('data-dbr-identity')} → ${el.getAttribute('data-dbr-state')}`);
+  }
   say('');
 
   const dumpCard = (el, label) => {

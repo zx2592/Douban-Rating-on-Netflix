@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/version-0.4.0-2e963d" alt="version 0.4.0">
   <img src="https://img.shields.io/badge/Manifest-V3-4285F4" alt="Manifest V3">
   <img src="https://img.shields.io/badge/Chrome-110%2B-4285F4" alt="Chrome 110+">
-  <img src="https://img.shields.io/badge/tests-420%20passing-2e963d" alt="420 tests passing">
+  <img src="https://img.shields.io/badge/tests-425%20passing-2e963d" alt="425 tests passing">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6" alt="TypeScript strict">
 </p>
 
@@ -359,7 +359,7 @@ src/
 | --- | --- |
 | `npm run build` | 打包到 `dist/`，并打印版本戳 |
 | `npm run watch` | 监听源码变化持续重建 |
-| `npm test` | 跑单测（420 个用例） |
+| `npm test` | 跑单测（425 个用例） |
 | `npm run typecheck` | TypeScript 类型检查 |
 | `npm run check` | 类型检查 + 测试 + 构建，提交前跑这个 |
 | `npm run icons` | 重新生成 `icons/` 下的 PNG 图标 |

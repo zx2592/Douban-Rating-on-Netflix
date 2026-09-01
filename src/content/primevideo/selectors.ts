@@ -43,6 +43,11 @@ const NOT_A_CARD = [
   // hero 区域的整幅背景图链接。它和 hero 的其它链接指向同一部片，而且里面
   // 没有 <img>，角标会落到整块背景的左上角；hero 还会自动轮播，角标跟着抖。
   '[data-testid="image-link"]',
+  // hero（首屏大图）内部的链接。实测 hero 里有三条链接指向同一部片：整幅
+  // 背景图（data-testid="image-link"）、标题美术字里 aria-hidden 的那条、
+  // 播放按钮。hero 本身现在由 `[data-testid="top-hero-card"]` 直接命中，
+  // 内部链接一律是重复的。
+  '[data-testid="top-hero-card"] a',
   // 卡片容器内部的链接。实测一张卡片是
   //   <article data-card-title="…"><div data-testid="packshot"><a href="/detail/…">
   // 容器和内部链接都命中的话，同一部片会被当成两张卡片各处理一遍 ——
@@ -63,6 +68,11 @@ export const PRIMEVIDEO_SELECTORS = {
   card: [
     // 卡片容器排第一：它同时带着片名和类型，信息最全。
     '[data-card-title]',
+    // 首屏大图。之前它一张角标都不出 —— 三条内部链接全被排除了（背景图、
+    // aria-hidden 的重复链接、播放按钮），而 hero 本身没有 data-card-title，
+    // 于是页面上最显眼的那部片反而是唯一没有评分的。改成直接认 hero 容器，
+    // 片名从标题美术字的 aria-label 上读。
+    'article[data-testid="top-hero-card"]',
     `a[data-testid="poster-link"]:not(${NOT_A_CARD})`,
     `a[href*="/detail/"]:not(${NOT_A_CARD})`,
     `a[href*="/gp/video/detail/"]:not(${NOT_A_CARD})`,
@@ -80,6 +90,10 @@ export const PRIMEVIDEO_SELECTORS = {
     { selector: ':closest([data-card-title])', attr: 'data-card-title' },
     { selector: '[data-card-title]', attr: 'data-card-title' },
     { selector: ':self', attr: 'aria-label' },
+    // hero 的片名。必须排在 img[alt] 前面：hero 里除了标题美术字还有整幅
+    // 背景图，谁先出现没有保证，而这一条是精确的（实测
+    // <h2 data-testid="title-art" aria-label="Sing 2">）。
+    { selector: '[data-testid="title-art"]', attr: 'aria-label' },
     { selector: 'img[alt]', attr: 'alt' },
     { selector: '[data-automation-id*="title"]', attr: null },
     { selector: '[data-testid*="title"]', attr: null },
@@ -97,6 +111,9 @@ export const PRIMEVIDEO_SELECTORS = {
     //   <article data-card-title><section data-testid="card-section">
     //     <div data-testid="packshot"><a …>
     '[data-testid="packshot"]',
+    // hero 的落点。挂在标题美术字旁边，而不是整幅背景图上 —— 后者会把角标
+    // 甩到整块背景的左上角，而且 hero 会自动轮播，角标跟着抖。
+    '[data-testid="title-art"]',
     'div:has(> picture)',
     'picture',
     'div:has(> img)',
