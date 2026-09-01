@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.4.0-2e963d" alt="version 0.4.0">
+  <img src="https://img.shields.io/badge/version-0.6.0-2e963d" alt="version 0.6.0">
   <img src="https://img.shields.io/badge/Manifest-V3-4285F4" alt="Manifest V3">
   <img src="https://img.shields.io/badge/Chrome-110%2B-4285F4" alt="Chrome 110+">
   <img src="https://img.shields.io/badge/tests-425%20passing-2e963d" alt="425 tests passing">
@@ -43,7 +43,7 @@ npm run build
 
 然后在 Chrome 打开 `chrome://extensions` → 打开右上角的**开发者模式** → 点**「加载已解压的扩展程序」** → 选择项目下的 `dist` 目录。
 
-> **改代码后要三步**：`npm run build` → 在 `chrome://extensions` 点该扩展的 🔄 刷新 → 刷新 Netflix 页面。少做一步和「代码有 bug」的表现完全一样，参见下方「先确认跑的是哪一版」。
+> **改代码后要三步**：`npm run build` → 在 `chrome://extensions` 点该扩展的 🔄 刷新 → 刷新 Netflix / Prime Video 页面。少做一步和「代码有 bug」的表现完全一样，参见下方「先确认跑的是哪一版」。
 
 ## 设置
 
@@ -90,7 +90,7 @@ npm run build
 2. **看当前 URL。** Prime Video 的投放形态有两类：独立站点 `primevideo.com`，以及各区域 amazon 站点下的 `/gp/video/` 路径。manifest 里两类都写了，但 amazon 的域名是逐个列举的（`.com` / `.co.jp` / `.de` …），你所在的区域站可能不在名单里。把 URL 发回来，或者直接往 `manifest.json` 的 `content_scripts` 里加一行。
 3. **注意裸域名。** `https://www.primevideo.com/*` 这样的写法**匹配不到**不带 `www` 的 `primevideo.com`——必须写成 `https://*.primevideo.com/*`。这个坑已经踩过一次，现在有 `tests/manifest.test.ts` 守着。
 
-**先确认跑的是哪一版。** `npm run build` 会打印一个版本戳，内容脚本把同一个戳写在 `<html data-dbr-loaded>` 上。在 Netflix 页面的 Console 里执行 `document.documentElement.dataset.dbrLoaded`，两者一致才说明新代码真的生效了。
+**先确认跑的是哪一版。** `npm run build` 会打印一个版本戳，内容脚本把同一个戳写在 `<html data-dbr-loaded>` 上。在 Netflix 或 Prime Video 页面的 Console 里执行 `document.documentElement.dataset.dbrLoaded`，两者一致才说明新代码真的生效了。
 
 想看详细日志：Console 里执行 `localStorage.setItem('dbr:debug', '1')` 后刷新页面。
 
@@ -392,6 +392,19 @@ src/
 ## 版本记录
 
 <details open>
+<summary><b>v0.6.0</b> — 接入 Prime Video</summary>
+
+同一套评分能力扩展到亚马逊 Prime Video。豆瓣和 IMDb 照旧并排显示，配置里可以单独关掉任一站点。
+
+- **主循环抽成站点无关的一层。** 观察器、驻留判定、角标渲染、点击记兴趣、卡片复用检测——这一整套是这个项目里踩坑最多的部分（分数配错封面、角标跨挂载点重复、点角标被误记成兴趣，每一条都真实发生过）。复制一份给新站点等于把坑重新埋一遍，所以站点现在只提供一个 `SiteAdapter`，其余全部共用。Netflix 的行为一行没变，由一组用虚构站点跑通全链路的测试守着。
+- **选择器全部按线上实测的结构写。** 用户在真实页面跑 `scripts/dom-probe.js` 打回来五轮报告，逐轮修正：播放按钮和 Info 按钮被当成影片查（改为按结构整片排除操作区，而不是逐个列举按钮文案——文案随界面语言变，列举永远追不上）、同一部片被容器和内部链接各查一遍、封面落点因为父层是 `<picture>` 而不是 `<div>` 全部解析失败、首屏大图一张角标都不出。
+- **注入范围有了测试。** 第一版 manifest 只写了 `www.primevideo.com`，漏掉裸域名和各区域的亚马逊域名，内容脚本压根没注入。现在有一份手写的 Chrome 匹配模式实现，对 11 个真实地址断言会注入、对亚马逊购物页断言不注入。
+- **监听哪些属性改由适配器决定。** 原先硬编码 Netflix 的 `aria-label` / `alt`；Prime Video 的片名在 `data-card-title` 上，卡片被回收时收不到通知，上一部片的评分会一直挂在新片子的封面上。这个 bug 是写复用测试时测出来的，不是读代码看出来的。
+- **卡片带上诊断状态。** `data-dbr-state` 区分「在等进入视口」「正在查询」「查过没有」「读不到片名」「结果作废」——排查时光看 DOM 分不清这些，而它们的修法完全不同。
+
+</details>
+
+<details>
 <summary><b>v0.3.0</b> — 接入 IMDb</summary>
 
 一个角标里并排显示两家的分。豆瓣绿、IMDb 金黄，各自可点。

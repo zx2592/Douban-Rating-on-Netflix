@@ -1,6 +1,6 @@
 {
   "name": "douban-ratings-for-netflix",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "description": "在 Netflix 与 Prime Video 页面上就地显示豆瓣与 IMDb 评分的 Chrome 扩展",
   "private": true,
   "type": "module",

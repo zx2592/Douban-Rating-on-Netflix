@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.4.0-2e963d" alt="version 0.4.0">
+  <img src="https://img.shields.io/badge/version-0.6.0-2e963d" alt="version 0.6.0">
   <img src="https://img.shields.io/badge/Manifest-V3-4285F4" alt="Manifest V3">
   <img src="https://img.shields.io/badge/Chrome-110%2B-4285F4" alt="Chrome 110+">
   <img src="https://img.shields.io/badge/tests-425%20passing-2e963d" alt="425 tests passing">
@@ -46,7 +46,7 @@ npm run build
 
 Then in Chrome open `chrome://extensions` → turn on **Developer mode** (top right) → click **Load unpacked** → pick the `dist` directory.
 
-> **After changing code, three steps**: `npm run build` → click 🔄 on the extension card in `chrome://extensions` → reload the Netflix tab. Skipping any one of them looks exactly like a code bug. See "Check which build is actually running" below.
+> **After changing code, three steps**: `npm run build` → click 🔄 on the extension card in `chrome://extensions` → reload the Netflix or Prime Video tab. Skipping any one of them looks exactly like a code bug. See "Check which build is actually running" below.
 
 ## Settings
 
@@ -93,7 +93,7 @@ The popup footer shows cached entry counts per source and how many titles are on
 2. **Look at the URL.** Prime Video ships in two shapes: the standalone `primevideo.com`, and `/gp/video/` paths on regional amazon domains. Both are in the manifest, but the amazon domains are enumerated one by one (`.com` / `.co.jp` / `.de` …) and your region may not be on the list. Send the URL, or just add a line to `content_scripts` in `manifest.json`.
 3. **Mind the bare domain.** A pattern like `https://www.primevideo.com/*` does **not** match `primevideo.com` without the `www` — it has to be `https://*.primevideo.com/*`. That trap has been hit once already; `tests/manifest.test.ts` now guards it.
 
-**Check which build is actually running.** `npm run build` prints a build stamp, and the content script writes the same stamp onto `<html data-dbr-loaded>`. Run `document.documentElement.dataset.dbrLoaded` in the console on a Netflix page — only if they match is your new code actually live.
+**Check which build is actually running.** `npm run build` prints a build stamp, and the content script writes the same stamp onto `<html data-dbr-loaded>`. Run `document.documentElement.dataset.dbrLoaded` in the console on a Netflix or Prime Video page — only if they match is your new code actually live.
 
 For verbose logs: run `localStorage.setItem('dbr:debug', '1')` in the console and reload.
 
@@ -396,6 +396,19 @@ Three general lessons:
 ## Changelog
 
 <details open>
+<summary><b>v0.6.0</b> — Prime Video support</summary>
+
+The same ratings on Amazon Prime Video. Douban and IMDb still sit side by side, and either site can be turned off on its own.
+
+- **The main loop became site-agnostic.** Observers, dwell gating, badge rendering, click-as-interest, card-recycling detection — that machinery is where this project has hit the most traps (scores landing on the wrong artwork, badges duplicating across mount points, clicking a badge recorded as interest; each one actually happened). Copying it for a new site would have re-planted every trap, so a site now supplies only a `SiteAdapter`. Netflix behaviour is unchanged, guarded by a suite that drives the whole pipeline with an invented site.
+- **Every selector is written from the live DOM.** Five rounds of `scripts/dom-probe.js` reports from real pages, each fixing something specific: the Play and Info buttons being looked up as films (fixed by excluding the hero action box structurally rather than enumerating button labels — labels change with UI language, enumeration never catches up), one film queried twice via both its container and its inner link, artwork mount points failing to resolve because the image's parent is `<picture>` and not `<div>`, and the hero banner showing no badge at all.
+- **Injection scope is now tested.** The first manifest listed only `www.primevideo.com`, missing the bare domain and every regional Amazon domain — the content script never loaded. A hand-written Chrome match-pattern implementation now asserts injection on 11 real URLs and non-injection on Amazon shopping pages.
+- **Watched attributes come from the adapter.** They were hard-coded to Netflix's `aria-label` / `alt`; Prime Video keeps its title in `data-card-title`, so recycled cards raised no notification and the previous film's rating stayed on the new artwork. This bug surfaced from writing the recycling test, not from reading the code.
+- **Cards carry a diagnostic state.** `data-dbr-state` separates "waiting for the viewport", "in flight", "looked up, nothing found", "no readable title" and "result discarded" — states the DOM alone cannot distinguish, and each needs a different fix.
+
+</details>
+
+<details>
 <summary><b>v0.3.0</b> — IMDb support</summary>
 
 Both ratings side by side in one badge: Douban green, IMDb amber, each clickable.
